@@ -1,4 +1,9 @@
-import { classesOfGroup, entriesWithGroups, teachersOfGroup } from '@/lib/constraints/helpers'
+import {
+  classesOfGroup,
+  entriesWithGroups,
+  remainingSessionsForGroup,
+  teachersOfGroup,
+} from '@/lib/constraints/helpers'
 import type { ScheduleContext } from '@/lib/constraints/types'
 
 export const DAY_LABELS: Record<number, string> = {
@@ -99,8 +104,7 @@ export function pendingSessionsForGroups(ctx: ScheduleContext, groupIds: string[
   for (const groupId of groupIds) {
     const group = ctx.teachingGroups.find((g) => g.id === groupId)
     if (!group) continue
-    const placedCount = ctx.entries.filter((e) => e.teaching_group_id === groupId).length
-    const remaining = group.session_slot_lengths.slice(placedCount)
+    const remaining = remainingSessionsForGroup(ctx, groupId)
     const subject = ctx.subjects.find((s) => s.id === group.subject_id)
     remaining.forEach((length, i) => {
       pending.push({
@@ -108,7 +112,7 @@ export function pendingSessionsForGroups(ctx: ScheduleContext, groupIds: string[
         groupLabel: group.label,
         subjectCode: subject?.code ?? '?',
         length,
-        index: placedCount + i,
+        index: i,
       })
     })
   }

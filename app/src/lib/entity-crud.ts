@@ -40,6 +40,14 @@ export function createEntityResource<TableName extends keyof Database['public'][
     return data as unknown as Row
   }
 
+  async function createMany(values: Insert[]): Promise<Row[]> {
+    const { data, error } = await untypedFrom()
+      .insert(values as never)
+      .select()
+    if (error) throw error
+    return (data ?? []) as unknown as Row[]
+  }
+
   async function update(id: string, values: Update): Promise<Row> {
     const { data, error } = await untypedFrom()
       .update(values as never)
@@ -78,14 +86,15 @@ export function createEntityResource<TableName extends keyof Database['public'][
     }
 
     const createMutation = useMutation({ mutationFn: create, onSuccess: invalidate })
+    const createManyMutation = useMutation({ mutationFn: createMany, onSuccess: invalidate })
     const updateMutation = useMutation({
       mutationFn: (params: { id: string; values: Update }) => update(params.id, params.values),
       onSuccess: invalidate,
     })
     const removeMutation = useMutation({ mutationFn: remove, onSuccess: invalidate })
 
-    return { createMutation, updateMutation, removeMutation }
+    return { createMutation, createManyMutation, updateMutation, removeMutation }
   }
 
-  return { list, create, update, remove, queryKey, useList, useMutations }
+  return { list, create, createMany, update, remove, queryKey, useList, useMutations }
 }

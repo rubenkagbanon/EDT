@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { useParams } from 'react-router-dom'
 import { DndContext, type DragEndEvent } from '@dnd-kit/core'
+import { Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { getErrorMessage } from '@/lib/utils'
@@ -31,6 +32,7 @@ import {
   slotAt,
   type ViewMode,
 } from '@/features/builder/gridUtils'
+import { autoGenerateSchedule } from '@/features/builder/autoGenerate'
 import { entriesWithGroups, classesOfGroup, teachersOfGroup } from '@/lib/constraints/helpers'
 import { GridCell } from '@/features/builder/GridCell'
 import { PendingSessionChip, type PendingDragData } from '@/features/builder/PendingSessionChip'
@@ -42,12 +44,15 @@ export default function BuilderPage() {
   const { violations, ctx, isLoading } = useViolations(establishmentId!)
   const { data: academicYears } = academicYearsResource.useList(establishmentId!)
   const activeYear = academicYears?.find((y) => y.is_active) ?? academicYears?.[0]
-  const { createMutation, removeMutation } = scheduleEntriesResource.useMutations(establishmentId!)
+  const { createMutation, createManyMutation, removeMutation } = scheduleEntriesResource.useMutations(
+    establishmentId!,
+  )
 
   const [view, setView] = React.useState<ViewMode>('class')
   const [entityId, setEntityId] = React.useState<string>('')
   const [roomByChip, setRoomByChip] = React.useState<Record<string, string>>({})
   const [selectedEntryId, setSelectedEntryId] = React.useState<string | null>(null)
+  const [generating, setGenerating] = React.useState(false)
 
   const entityOptions = React.useMemo(() => {
     if (!ctx) return []
@@ -114,6 +119,30 @@ export default function BuilderPage() {
     }
   }
 
+  async function handleAutoGenerate() {
+    if (!canEdit || !activeYear || !ctx) return
+    setGenerating(true)
+    try {
+      const result = autoGenerateSchedule(ctx, activeYear.id)
+      if (result.newEntries.length > 0) {
+        await createManyMutation.mutateAsync(result.newEntries as never)
+      }
+      if (result.placedCount === 0 && result.unplacedCount === 0) {
+        toast.info('Aucune seance en attente a placer.')
+      } else if (result.unplacedCount > 0) {
+        toast.warning(
+          `${result.placedCount} seance(s) placee(s) automatiquement, ${result.unplacedCount} n'ont pas pu l'etre (a placer manuellement).`,
+        )
+      } else {
+        toast.success(`${result.placedCount} seance(s) placee(s) automatiquement.`)
+      }
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Generation impossible.'))
+    } finally {
+      setGenerating(false)
+    }
+  }
+
   async function handleDeleteEntry(entryId: string) {
     try {
       await removeMutation.mutateAsync(entryId)
@@ -140,9 +169,22 @@ export default function BuilderPage() {
               violation de regle.
             </p>
           </div>
-          {!activeYear && (
-            <Badge variant="destructive">Aucune annee scolaire active - creez-en une.</Badge>
-          )}
+          <div className="flex items-center gap-2">
+            {!activeYear && (
+              <Badge variant="destructive">Aucune annee scolaire active - creez-en une.</Badge>
+            )}
+            {canEdit && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!activeYear || generating}
+                onClick={handleAutoGenerate}
+              >
+                <Sparkles className="size-4" />
+                {generating ? 'Generation...' : 'Generer automatiquement'}
+              </Button>
+            )}
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">

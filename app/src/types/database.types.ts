@@ -124,39 +124,39 @@ export type Database = {
       }
       curriculum_items: {
         Row: {
-          class_id: string
           establishment_id: string
           id: string
+          level_id: string
           subject_id: string
           weekly_hours: number
         }
         Insert: {
-          class_id: string
           establishment_id?: string
           id?: string
+          level_id: string
           subject_id: string
           weekly_hours?: number
         }
         Update: {
-          class_id?: string
           establishment_id?: string
           id?: string
+          level_id?: string
           subject_id?: string
           weekly_hours?: number
         }
         Relationships: [
           {
-            foreignKeyName: 'curriculum_items_class_id_fkey'
-            columns: ['class_id']
-            isOneToOne: false
-            referencedRelation: 'classes'
-            referencedColumns: ['id']
-          },
-          {
             foreignKeyName: 'curriculum_items_establishment_id_fkey'
             columns: ['establishment_id']
             isOneToOne: false
             referencedRelation: 'establishments'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'curriculum_items_level_id_fkey'
+            columns: ['level_id']
+            isOneToOne: false
+            referencedRelation: 'levels'
             referencedColumns: ['id']
           },
           {

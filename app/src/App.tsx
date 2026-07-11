@@ -8,6 +8,8 @@ import {
 } from '@/components/RouteGuards'
 import Login from '@/pages/auth/Login'
 import Signup from '@/pages/auth/Signup'
+import ForgotPassword from '@/pages/auth/ForgotPassword'
+import ResetPassword from '@/pages/auth/ResetPassword'
 import Onboarding from '@/pages/Onboarding'
 import AppLayout from '@/pages/app/AppLayout'
 import Dashboard from '@/pages/app/Dashboard'
@@ -30,7 +32,13 @@ function App() {
       <Route element={<RequireGuest />}>
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
       </Route>
+
+      {/* Pas de garde ici : le lien de reinitialisation etablit une session
+          "recovery" que RequireGuest renverrait immediatement vers le
+          dashboard/onboarding. */}
+      <Route path="/reset-password" element={<ResetPassword />} />
 
       <Route element={<RequireOnboarding />}>
         <Route path="/onboarding" element={<Onboarding />} />

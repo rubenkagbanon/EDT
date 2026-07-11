@@ -45,3 +45,21 @@ export function levelOfClass(ctx: ScheduleContext, classId: string) {
   if (!cls) return undefined
   return ctx.levels.find((l) => l.id === cls.level_id)
 }
+
+/**
+ * Longueurs de seances encore a placer pour un groupe : difference de
+ * multiset entre `session_slot_lengths` et les `slot_count` deja places (pas
+ * une simple troncature positionnelle, qui suppose a tort que les premieres
+ * entrees placees correspondent aux premiers elements du tableau).
+ */
+export function remainingSessionsForGroup(ctx: ScheduleContext, groupId: string): number[] {
+  const group = ctx.teachingGroups.find((g) => g.id === groupId)
+  if (!group) return []
+  const remaining = [...group.session_slot_lengths]
+  for (const entry of ctx.entries) {
+    if (entry.teaching_group_id !== groupId) continue
+    const idx = remaining.indexOf(entry.slot_count)
+    if (idx !== -1) remaining.splice(idx, 1)
+  }
+  return remaining
+}
