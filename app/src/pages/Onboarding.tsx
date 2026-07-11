@@ -54,7 +54,7 @@ export default function Onboarding() {
       })
       await invalidateProfile()
       toast.success('Etablissement cree.')
-      navigate(`/app/${establishment.id}/dashboard`, { replace: true })
+      navigate(`/app/${establishment.id}/onboarding-wizard`, { replace: true })
     } catch (error) {
       toast.error(getErrorMessage(error, 'Une erreur est survenue.'))
     } finally {

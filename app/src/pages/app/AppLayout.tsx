@@ -14,6 +14,7 @@ import {
   Download,
   LogOut,
   Menu,
+  Wand2,
 } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
@@ -32,6 +33,12 @@ function useNavItems(establishmentId: string): NavItem[] {
   const base = `/app/${establishmentId}`
   return [
     { to: `${base}/dashboard`, label: 'Tableau de bord', icon: LayoutDashboard },
+    {
+      to: `${base}/onboarding-wizard`,
+      label: 'Configuration guidee',
+      icon: Wand2,
+      roles: ['admin', 'scheduler'],
+    },
     { to: `${base}/builder`, label: 'Construction EDT', icon: CalendarRange },
     { to: `${base}/report`, label: "Rapport d'arbitrage", icon: FileWarning },
     { to: `${base}/export`, label: 'Export', icon: Download },

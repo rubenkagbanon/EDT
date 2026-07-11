@@ -12,6 +12,7 @@ import ForgotPassword from '@/pages/auth/ForgotPassword'
 import ResetPassword from '@/pages/auth/ResetPassword'
 import Onboarding from '@/pages/Onboarding'
 import AppLayout from '@/pages/app/AppLayout'
+import OnboardingWizard from '@/pages/app/OnboardingWizard'
 import Dashboard from '@/pages/app/Dashboard'
 import BuilderPage from '@/pages/app/BuilderPage'
 import ReportPage from '@/pages/app/ReportPage'
@@ -47,6 +48,7 @@ function App() {
       <Route element={<RequireEstablishment />}>
         <Route path="/app/:establishmentId" element={<AppLayout />}>
           <Route index element={<Navigate to="dashboard" replace />} />
+          <Route path="onboarding-wizard" element={<OnboardingWizard />} />
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="builder" element={<BuilderPage />} />
           <Route path="report" element={<ReportPage />} />

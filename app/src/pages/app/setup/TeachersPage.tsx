@@ -1,108 +1,121 @@
 import * as React from 'react'
 import { useParams } from 'react-router-dom'
-import { Pencil, Plus, Trash2 } from 'lucide-react'
+import { Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { getErrorMessage } from '@/lib/utils'
-
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { subjectsResource, teachersResource } from '@/features/setup/resources'
 import { useSetTeacherSubjects, useTeacherSubjects } from '@/features/setup/teacherSubjects'
-import type { Tables } from '@/types/database.types'
 
-type Teacher = Tables<'teachers'>
+type TeacherRow = { id: string | null; fullName: string; maxHours: string; subjectIds: string[] }
+
+function emptyRow(): TeacherRow {
+  return { id: null, fullName: '', maxHours: '0', subjectIds: [] }
+}
 
 export default function TeachersPage() {
   const { establishmentId } = useParams<{ establishmentId: string }>()
   const { data: teachers, isLoading } = teachersResource.useList(establishmentId!, 'full_name')
-  const { createMutation, updateMutation, removeMutation } = teachersResource.useMutations(
-    establishmentId!,
-  )
+  const { createMutation, updateMutation, removeMutation } = teachersResource.useMutations(establishmentId!)
   const { data: subjects } = subjectsResource.useList(establishmentId!, 'code')
   const { data: teacherSubjects } = useTeacherSubjects(establishmentId!)
   const setTeacherSubjects = useSetTeacherSubjects(establishmentId!)
 
-  const [dialogOpen, setDialogOpen] = React.useState(false)
-  const [editing, setEditing] = React.useState<Teacher | null>(null)
-  const [fullName, setFullName] = React.useState('')
-  const [maxHours, setMaxHours] = React.useState('0')
-  const [subjectIds, setSubjectIds] = React.useState<string[]>([])
+  const [rows, setRows] = React.useState<TeacherRow[]>([emptyRow()])
   const [saving, setSaving] = React.useState(false)
+  const initialized = React.useRef(false)
 
-  function subjectsFor(teacherId: string) {
-    const ids = new Set(
-      (teacherSubjects ?? []).filter((ts) => ts.teacher_id === teacherId).map((ts) => ts.subject_id),
+  React.useEffect(() => {
+    if (initialized.current || !teachers || !teacherSubjects) return
+    initialized.current = true
+    const byTeacher = new Map<string, string[]>()
+    for (const ts of teacherSubjects) {
+      const list = byTeacher.get(ts.teacher_id) ?? []
+      list.push(ts.subject_id)
+      byTeacher.set(ts.teacher_id, list)
+    }
+    setRows(
+      teachers.length > 0
+        ? teachers.map((t) => ({
+            id: t.id,
+            fullName: t.full_name,
+            maxHours: String(t.max_weekly_hours),
+            subjectIds: byTeacher.get(t.id) ?? [],
+          }))
+        : [emptyRow()],
     )
-    return (subjects ?? []).filter((s) => ids.has(s.id))
+  }, [teachers, teacherSubjects])
+
+  function addRow() {
+    setRows((r) => [...r, emptyRow()])
   }
 
-  function openCreate() {
-    setEditing(null)
-    setFullName('')
-    setMaxHours('0')
-    setSubjectIds([])
-    setDialogOpen(true)
+  function updateRow(index: number, patch: Partial<Pick<TeacherRow, 'fullName' | 'maxHours'>>) {
+    setRows((r) => r.map((row, i) => (i === index ? { ...row, ...patch } : row)))
   }
 
-  function openEdit(teacher: Teacher) {
-    setEditing(teacher)
-    setFullName(teacher.full_name)
-    setMaxHours(String(teacher.max_weekly_hours))
-    setSubjectIds(subjectsFor(teacher.id).map((s) => s.id))
-    setDialogOpen(true)
+  function toggleSubject(index: number, subjectId: string, checked: boolean) {
+    setRows((r) =>
+      r.map((row, i) =>
+        i === index
+          ? {
+              ...row,
+              subjectIds: checked
+                ? [...row.subjectIds, subjectId]
+                : row.subjectIds.filter((id) => id !== subjectId),
+            }
+          : row,
+      ),
+    )
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
+  async function handleDeleteRow(index: number) {
+    const row = rows[index]
+    if (row.id) {
+      if (!window.confirm(`Supprimer ${row.fullName || 'cet enseignant'} ?`)) return
+      try {
+        await removeMutation.mutateAsync(row.id)
+        toast.success('Enseignant supprime.')
+      } catch (error) {
+        toast.error(getErrorMessage(error))
+        return
+      }
+    }
+    setRows((r) => r.filter((_, i) => i !== index))
+  }
+
+  async function handleSave() {
+    if (rows.every((r) => !r.fullName.trim())) {
+      toast.error('Ajoutez au moins un enseignant.')
+      return
+    }
     setSaving(true)
     try {
-      const values = { full_name: fullName, max_weekly_hours: Number(maxHours) || 0 }
-      let teacherId = editing?.id
-      if (editing) {
-        await updateMutation.mutateAsync({ id: editing.id, values })
-      } else {
-        const created = await createMutation.mutateAsync(values as never)
-        teacherId = created.id
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i]
+        if (!row.fullName.trim()) continue
+        const values = { full_name: row.fullName.trim(), max_weekly_hours: Number(row.maxHours) || 0 }
+        let teacherId = row.id
+        if (teacherId) {
+          await updateMutation.mutateAsync({ id: teacherId, values })
+        } else {
+          const created = await createMutation.mutateAsync(values as never)
+          teacherId = created.id
+          const newId = teacherId
+          setRows((r) => r.map((rr, idx) => (idx === i ? { ...rr, id: newId } : rr)))
+        }
+        await setTeacherSubjects.mutateAsync({ teacherId, subjectIds: row.subjectIds })
       }
-      if (teacherId) {
-        await setTeacherSubjects.mutateAsync({ teacherId, subjectIds })
-      }
-      toast.success('Enseignant enregistre.')
-      setDialogOpen(false)
+      toast.success('Enseignants enregistres.')
     } catch (error) {
-      toast.error(getErrorMessage(error, 'Une erreur est survenue.'))
+      toast.error(getErrorMessage(error))
     } finally {
       setSaving(false)
-    }
-  }
-
-  async function handleDelete(teacher: Teacher) {
-    if (!window.confirm(`Supprimer ${teacher.full_name} ?`)) return
-    try {
-      await removeMutation.mutateAsync(teacher.id)
-      toast.success('Enseignant supprime.')
-    } catch (error) {
-      toast.error(getErrorMessage(error, 'Une erreur est survenue.'))
     }
   }
 
@@ -113,106 +126,74 @@ export default function TeachersPage() {
         <CardDescription>
           Plafond de service hebdomadaire et matieres habilitees pour chaque enseignant.
         </CardDescription>
-        <CardAction>
-          <Button size="sm" onClick={openCreate}>
-            <Plus className="size-4" />
-            Ajouter
-          </Button>
-        </CardAction>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex flex-col gap-4">
         {isLoading ? (
           <p className="text-sm text-muted-foreground">Chargement...</p>
-        ) : !teachers || teachers.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Aucun enseignant pour le moment.</p>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Nom</TableHead>
-                <TableHead>Plafond hebdo.</TableHead>
-                <TableHead>Matieres</TableHead>
-                <TableHead className="w-0" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {teachers.map((teacher) => (
-                <TableRow key={teacher.id}>
-                  <TableCell>{teacher.full_name}</TableCell>
-                  <TableCell>{teacher.max_weekly_hours} h</TableCell>
-                  <TableCell>
-                    {subjectsFor(teacher.id)
-                      .map((s) => s.code)
-                      .join(', ') || '-'}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex justify-end gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => openEdit(teacher)}>
-                        <Pencil className="size-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleDelete(teacher)}>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="min-w-48">Nom complet</TableHead>
+                  <TableHead className="w-32">Plafond hebdo.</TableHead>
+                  {(subjects ?? []).map((s) => (
+                    <TableHead key={s.id} className="text-center">
+                      {s.code}
+                    </TableHead>
+                  ))}
+                  <TableHead className="w-0" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((row, index) => (
+                  <TableRow key={index}>
+                    <TableCell className="p-1">
+                      <Input
+                        placeholder="ex. Mme Kouassi"
+                        value={row.fullName}
+                        onChange={(e) => updateRow(index, { fullName: e.target.value })}
+                      />
+                    </TableCell>
+                    <TableCell className="p-1">
+                      <Input
+                        type="number"
+                        min={0}
+                        step={0.5}
+                        value={row.maxHours}
+                        onChange={(e) => updateRow(index, { maxHours: e.target.value })}
+                      />
+                    </TableCell>
+                    {(subjects ?? []).map((s) => (
+                      <TableCell key={s.id} className="p-1 text-center">
+                        <Checkbox
+                          checked={row.subjectIds.includes(s.id)}
+                          onCheckedChange={(checked) => toggleSubject(index, s.id, Boolean(checked))}
+                        />
+                      </TableCell>
+                    ))}
+                    <TableCell className="p-1">
+                      <Button type="button" variant="ghost" size="icon" onClick={() => handleDeleteRow(index)}>
                         <Trash2 className="size-4" />
                       </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </CardContent>
-
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{editing ? 'Modifier' : 'Ajouter'} un enseignant</DialogTitle>
-            <DialogDescription>
-              Le plafond horaire ne doit jamais etre depasse lors de la construction de l'EDT.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="full_name">Nom complet</Label>
-              <Input id="full_name" required value={fullName} onChange={(e) => setFullName(e.target.value)} />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="max_hours">Plafond horaire hebdomadaire</Label>
-              <Input
-                id="max_hours"
-                type="number"
-                min={0}
-                step={0.5}
-                required
-                value={maxHours}
-                onChange={(e) => setMaxHours(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label>Matieres habilitees</Label>
-              <div className="grid max-h-48 grid-cols-2 gap-2 overflow-y-auto rounded-md border border-input p-3">
-                {(subjects ?? []).map((subject) => (
-                  <label key={subject.id} className="flex items-center gap-2 text-sm">
-                    <Checkbox
-                      checked={subjectIds.includes(subject.id)}
-                      onCheckedChange={(checked) =>
-                        setSubjectIds((ids) =>
-                          checked ? [...ids, subject.id] : ids.filter((id) => id !== subject.id),
-                        )
-                      }
-                    />
-                    {subject.code} - {subject.name}
-                  </label>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </div>
-            </div>
-            <DialogFooter>
-              <Button type="submit" disabled={saving}>
-                {saving ? 'Enregistrement...' : 'Enregistrer'}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+              </TableBody>
+            </Table>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between">
+          <Button type="button" variant="outline" size="sm" onClick={addRow}>
+            <Plus className="size-4" />
+            Ajouter un enseignant
+          </Button>
+          <Button onClick={handleSave} disabled={saving}>
+            {saving ? 'Enregistrement...' : 'Enregistrer'}
+          </Button>
+        </div>
+      </CardContent>
     </Card>
   )
 }

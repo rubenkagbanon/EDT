@@ -1,11 +1,15 @@
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
+import { Wand2 } from 'lucide-react'
 
-import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Card, CardAction, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   classesResource,
+  levelsResource,
   roomsResource,
   scheduleEntriesResource,
   teachersResource,
+  timeSlotsResource,
 } from '@/features/setup/resources'
 import { useValidationSummary } from '@/features/validation/useValidationSummary'
 
@@ -15,7 +19,12 @@ export default function Dashboard() {
   const { data: teachers } = teachersResource.useList(establishmentId!)
   const { data: rooms } = roomsResource.useList(establishmentId!)
   const { data: entries } = scheduleEntriesResource.useList(establishmentId!)
+  const { data: levels } = levelsResource.useList(establishmentId!)
+  const { data: timeSlots } = timeSlotsResource.useList(establishmentId!)
   const summary = useValidationSummary(establishmentId!)
+
+  const looksUnconfigured =
+    levels?.length === 0 && rooms?.length === 0 && timeSlots?.length === 0
 
   const stats = [
     { label: 'Classes', value: classes?.length ?? '-' },
@@ -30,6 +39,26 @@ export default function Dashboard() {
         <h1 className="text-2xl font-semibold">Tableau de bord</h1>
         <p className="text-sm text-muted-foreground">Vue d'ensemble de la construction de l'emploi du temps.</p>
       </div>
+
+      {looksUnconfigured && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Etablissement pas encore configure</CardTitle>
+            <CardDescription>
+              Aucun creneau, salle ou niveau n'est encore enregistre. L'assistant de configuration
+              guidee vous aide a demarrer en 4 etapes.
+            </CardDescription>
+            <CardAction>
+              <Button asChild size="sm">
+                <Link to={`/app/${establishmentId}/onboarding-wizard`}>
+                  <Wand2 className="size-4" />
+                  Configurer maintenant
+                </Link>
+              </Button>
+            </CardAction>
+          </CardHeader>
+        </Card>
+      )}
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {stats.map((s) => (

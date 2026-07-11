@@ -63,6 +63,12 @@ export function createEntityResource<TableName extends keyof Database['public'][
     if (error) throw error
   }
 
+  async function removeMany(ids: string[]): Promise<void> {
+    if (ids.length === 0) return
+    const { error } = await untypedFrom().delete().in('id', ids)
+    if (error) throw error
+  }
+
   function queryKey(establishmentId: string) {
     return [table, establishmentId] as const
   }
@@ -92,9 +98,10 @@ export function createEntityResource<TableName extends keyof Database['public'][
       onSuccess: invalidate,
     })
     const removeMutation = useMutation({ mutationFn: remove, onSuccess: invalidate })
+    const removeManyMutation = useMutation({ mutationFn: removeMany, onSuccess: invalidate })
 
-    return { createMutation, createManyMutation, updateMutation, removeMutation }
+    return { createMutation, createManyMutation, updateMutation, removeMutation, removeManyMutation }
   }
 
-  return { list, create, createMany, update, remove, queryKey, useList, useMutations }
+  return { list, create, createMany, update, remove, removeMany, queryKey, useList, useMutations }
 }

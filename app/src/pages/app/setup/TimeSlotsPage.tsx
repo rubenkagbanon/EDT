@@ -1,38 +1,16 @@
 import * as React from 'react'
 import { useParams } from 'react-router-dom'
-import { Pencil, Plus, Trash2, X } from 'lucide-react'
+import { Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { getErrorMessage } from '@/lib/utils'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { timeSlotsResource } from '@/features/setup/resources'
-import type { Tables } from '@/types/database.types'
-
-type TimeSlot = Tables<'time_slots'>
-
-type SlotRow = { orderIndex: string; startTime: string; endTime: string }
+import { scheduleEntriesResource, timeSlotsResource } from '@/features/setup/resources'
+import type { Tables, TablesInsert } from '@/types/database.types'
 
 const DAYS = [
   { value: '1', label: 'Lundi' },
@@ -40,131 +18,132 @@ const DAYS = [
   { value: '3', label: 'Mercredi' },
   { value: '4', label: 'Jeudi' },
   { value: '5', label: 'Vendredi' },
-  { value: '6', label: 'Samedi' },
 ]
 
 const KINDS = [
   { value: 'cours', label: 'Cours' },
   { value: 'recreation', label: 'Recreation' },
   { value: 'dejeuner', label: 'Dejeuner' },
-  { value: 'banalise', label: 'Banalise (vie scolaire)' },
+  { value: 'banalise', label: 'Banalise' },
 ]
 
-function dayLabel(value: number) {
-  return DAYS.find((d) => d.value === String(value))?.label ?? String(value)
+function kindShortLabel(value: string) {
+  if (value === 'cours') return 'Cours'
+  if (value === 'recreation') return 'Recre'
+  if (value === 'dejeuner') return 'Dej.'
+  if (value === 'banalise') return 'Banalise'
+  return value
 }
 
-function kindLabel(value: string) {
-  return KINDS.find((k) => k.value === value)?.label ?? value
+type GridRow = { startTime: string; endTime: string; cells: Record<string, string> }
+
+function emptyRow(): GridRow {
+  return { startTime: '', endTime: '', cells: {} }
 }
 
-function emptyRow(): SlotRow {
-  return { orderIndex: '0', startTime: '', endTime: '' }
+function buildInitialRows(existing: Tables<'time_slots'>[]): GridRow[] {
+  if (existing.length === 0) return [emptyRow()]
+  const byOrder = new Map<number, Tables<'time_slots'>[]>()
+  for (const slot of existing) {
+    const list = byOrder.get(slot.order_index) ?? []
+    list.push(slot)
+    byOrder.set(slot.order_index, list)
+  }
+  const orders = [...byOrder.keys()].sort((a, b) => a - b)
+  return orders.map((order) => {
+    const slots = byOrder.get(order)!
+    const sample = slots[0]
+    const cells: Record<string, string> = {}
+    for (const s of slots) cells[String(s.day_of_week)] = s.kind
+    return { startTime: sample.start_time.slice(0, 5), endTime: sample.end_time.slice(0, 5), cells }
+  })
 }
 
 export default function TimeSlotsPage() {
   const { establishmentId } = useParams<{ establishmentId: string }>()
-  const { data: rows, isLoading } = timeSlotsResource.useList(establishmentId!, 'order_index')
-  const { createManyMutation, updateMutation, removeMutation } = timeSlotsResource.useMutations(
-    establishmentId!,
-  )
+  const { data: existingSlots, isLoading } = timeSlotsResource.useList(establishmentId!, 'order_index')
+  const { data: entries } = scheduleEntriesResource.useList(establishmentId!)
+  const { createManyMutation, removeManyMutation } = timeSlotsResource.useMutations(establishmentId!)
 
-  const [dialogOpen, setDialogOpen] = React.useState(false)
-  const [editing, setEditing] = React.useState<TimeSlot | null>(null)
-  const [selectedDays, setSelectedDays] = React.useState<string[]>([])
-  const [slotRows, setSlotRows] = React.useState<SlotRow[]>([emptyRow()])
-  const [kind, setKind] = React.useState('cours')
+  const [rows, setRows] = React.useState<GridRow[]>([emptyRow()])
   const [saving, setSaving] = React.useState(false)
+  const initialized = React.useRef(false)
 
-  function openCreate() {
-    setEditing(null)
-    setSelectedDays([])
-    setSlotRows([emptyRow()])
-    setKind('cours')
-    setDialogOpen(true)
-  }
-
-  function openEdit(row: TimeSlot) {
-    setEditing(row)
-    setSelectedDays([String(row.day_of_week)])
-    setSlotRows([
-      {
-        orderIndex: String(row.order_index),
-        startTime: row.start_time.slice(0, 5),
-        endTime: row.end_time.slice(0, 5),
-      },
-    ])
-    setKind(row.kind)
-    setDialogOpen(true)
-  }
-
-  function toggleDay(day: string, checked: boolean) {
-    if (editing) {
-      // En edition, un seul jour a la fois (une ligne = un jour).
-      setSelectedDays(checked ? [day] : [])
-      return
-    }
-    setSelectedDays((days) => (checked ? [...days, day] : days.filter((d) => d !== day)))
-  }
+  React.useEffect(() => {
+    if (initialized.current || !existingSlots) return
+    initialized.current = true
+    setRows(buildInitialRows(existingSlots))
+  }, [existingSlots])
 
   function addRow() {
-    setSlotRows((current) => {
-      const last = current[current.length - 1]
-      const nextOrder = last?.orderIndex !== '' ? String(Number(last?.orderIndex ?? -1) + 1) : ''
-      return [...current, { orderIndex: nextOrder, startTime: last?.endTime ?? '', endTime: '' }]
+    setRows((r) => {
+      const last = r[r.length - 1]
+      return [...r, { ...emptyRow(), startTime: last?.endTime ?? '' }]
     })
   }
-
   function removeRow(index: number) {
-    setSlotRows((current) => current.filter((_, i) => i !== index))
+    setRows((r) => r.filter((_, i) => i !== index))
+  }
+  function updateRow(index: number, patch: Partial<Pick<GridRow, 'startTime' | 'endTime'>>) {
+    setRows((r) => r.map((row, i) => (i === index ? { ...row, ...patch } : row)))
+  }
+  // Recreation/dejeuner concernent quasi-systematiquement tous les jours a la fois : on
+  // propage a toute la ligne pour eviter de re-selectionner colonne par colonne. Cours et
+  // banalise restent par jour (ex. mercredi apres-midi different des autres jours).
+  const ROW_WIDE_KINDS = new Set(['recreation', 'dejeuner'])
+
+  function setCell(index: number, day: string, kind: string) {
+    setRows((r) =>
+      r.map((row, i) => {
+        if (i !== index) return row
+        const cells = { ...row.cells }
+        if (ROW_WIDE_KINDS.has(kind)) {
+          for (const d of DAYS) cells[d.value] = kind
+        } else if (kind === '') {
+          delete cells[day]
+        } else {
+          cells[day] = kind
+        }
+        return { ...row, cells }
+      }),
+    )
   }
 
-  function updateRow(index: number, field: keyof SlotRow, value: string) {
-    setSlotRows((current) => current.map((r, i) => (i === index ? { ...r, [field]: value } : r)))
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (selectedDays.length === 0) {
-      toast.error('Selectionnez au moins un jour.')
+  async function handleSave() {
+    if (rows.some((r) => !r.startTime || !r.endTime)) {
+      toast.error("Renseignez l'heure de debut et de fin de chaque ligne.")
+      return
+    }
+    const inserts: TablesInsert<'time_slots'>[] = rows.flatMap((row, i) =>
+      DAYS.filter((d) => row.cells[d.value]).map((d) => ({
+        day_of_week: Number(d.value),
+        order_index: i + 1,
+        start_time: row.startTime,
+        end_time: row.endTime,
+        kind: row.cells[d.value],
+      })),
+    )
+    if (inserts.length === 0) {
+      toast.error('Cochez au moins une case pour creer un creneau.')
       return
     }
     if (
-      slotRows.length === 0 ||
-      slotRows.some((r) => r.orderIndex === '' || r.startTime === '' || r.endTime === '')
+      entries &&
+      entries.length > 0 &&
+      !window.confirm(
+        `${entries.length} seance(s) sont deja placees dans la grille actuelle. Remplacer les creneaux peut les decaler ou les rendre incoherentes. Continuer ?`,
+      )
     ) {
-      toast.error('Completez l\'ordre, l\'heure de debut et l\'heure de fin de chaque ligne.')
       return
     }
+
     setSaving(true)
     try {
-      if (editing) {
-        const row = slotRows[0]
-        await updateMutation.mutateAsync({
-          id: editing.id,
-          values: {
-            day_of_week: Number(selectedDays[0]),
-            order_index: Number(row.orderIndex),
-            start_time: row.startTime,
-            end_time: row.endTime,
-            kind,
-          },
-        })
-        toast.success('Creneau modifie.')
-      } else {
-        const payload = selectedDays.flatMap((day) =>
-          slotRows.map((row) => ({
-            day_of_week: Number(day),
-            order_index: Number(row.orderIndex),
-            start_time: row.startTime,
-            end_time: row.endTime,
-            kind,
-          })),
-        )
-        await createManyMutation.mutateAsync(payload as never)
-        toast.success(payload.length > 1 ? `${payload.length} creneaux crees.` : 'Creneau cree.')
+      if (existingSlots && existingSlots.length > 0) {
+        await removeManyMutation.mutateAsync(existingSlots.map((s) => s.id))
       }
-      setDialogOpen(false)
+      await createManyMutation.mutateAsync(inserts as never)
+      toast.success(`Grille enregistree (${inserts.length} creneau(x)).`)
     } catch (error) {
       toast.error(getErrorMessage(error))
     } finally {
@@ -172,184 +151,97 @@ export default function TimeSlotsPage() {
     }
   }
 
-  async function handleDelete(row: TimeSlot) {
-    if (!window.confirm(`Supprimer le creneau ${dayLabel(row.day_of_week)} ${row.start_time.slice(0, 5)} ?`))
-      return
-    try {
-      await removeMutation.mutateAsync(row.id)
-      toast.success('Creneau supprime.')
-    } catch (error) {
-      toast.error(getErrorMessage(error))
-    }
-  }
-
-  const previewCount = selectedDays.length * slotRows.length
-
   return (
     <Card>
       <CardHeader>
         <CardTitle>Creneaux horaires</CardTitle>
         <CardDescription>
-          La grille hebdomadaire de l'etablissement : jours, heures, recreations, pauses et
-          demi-journees banalisees. A la creation, ajoutez autant de lignes (ordre/debut/fin) que
-          necessaire et selectionnez plusieurs jours : le meme type sera applique a toutes les
-          combinaisons en une seule fois.
+          La grille hebdomadaire de l'etablissement. Une ligne = un creneau horaire (l'ordre suit la
+          position de la ligne) ; chaque case indique le type pour ce jour (cours, recreation,
+          dejeuner, banalise) ou reste vide s'il n'y a rien ce jour-la.
         </CardDescription>
-        <CardAction>
-          <Button size="sm" onClick={openCreate}>
-            <Plus className="size-4" />
-            Ajouter
-          </Button>
-        </CardAction>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex flex-col gap-4">
         {isLoading ? (
           <p className="text-sm text-muted-foreground">Chargement...</p>
-        ) : !rows || rows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Aucun element pour le moment.</p>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Jour</TableHead>
-                <TableHead>Debut</TableHead>
-                <TableHead>Fin</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Ordre</TableHead>
-                <TableHead className="w-0" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((row) => (
-                <TableRow key={row.id}>
-                  <TableCell>{dayLabel(row.day_of_week)}</TableCell>
-                  <TableCell>{row.start_time.slice(0, 5)}</TableCell>
-                  <TableCell>{row.end_time.slice(0, 5)}</TableCell>
-                  <TableCell>{kindLabel(row.kind)}</TableCell>
-                  <TableCell>{row.order_index}</TableCell>
-                  <TableCell>
-                    <div className="flex justify-end gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => openEdit(row)}>
-                        <Pencil className="size-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleDelete(row)}>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-14">Ordre</TableHead>
+                  <TableHead>Debut</TableHead>
+                  <TableHead>Fin</TableHead>
+                  {DAYS.map((d) => (
+                    <TableHead key={d.value} className="text-center">
+                      {d.label}
+                    </TableHead>
+                  ))}
+                  <TableHead className="w-0" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((row, index) => (
+                  <TableRow key={index}>
+                    <TableCell className="text-center text-muted-foreground">{index + 1}</TableCell>
+                    <TableCell className="p-1">
+                      <Input
+                        type="time"
+                        value={row.startTime}
+                        onChange={(e) => updateRow(index, { startTime: e.target.value })}
+                      />
+                    </TableCell>
+                    <TableCell className="p-1">
+                      <Input
+                        type="time"
+                        value={row.endTime}
+                        onChange={(e) => updateRow(index, { endTime: e.target.value })}
+                      />
+                    </TableCell>
+                    {DAYS.map((d) => (
+                      <TableCell key={d.value} className="p-1">
+                        <Select
+                          value={row.cells[d.value] ?? '__none__'}
+                          onValueChange={(v) => setCell(index, d.value, v === '__none__' ? '' : v)}
+                        >
+                          <SelectTrigger className="w-full min-w-24">
+                            <SelectValue>
+                              {row.cells[d.value] ? kindShortLabel(row.cells[d.value]) : '—'}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">—</SelectItem>
+                            {KINDS.map((k) => (
+                              <SelectItem key={k.value} value={k.value}>
+                                {k.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </TableCell>
+                    ))}
+                    <TableCell className="p-1">
+                      <Button type="button" variant="ghost" size="icon" onClick={() => removeRow(index)}>
                         <Trash2 className="size-4" />
                       </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </CardContent>
-
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{editing ? 'Modifier' : 'Ajouter'} un creneau</DialogTitle>
-            <DialogDescription>
-              {editing
-                ? 'Une ligne represente un seul jour.'
-                : "Cochez un ou plusieurs jours, ajoutez une ligne par creneau (ordre, debut, fin), puis choisissez le type applique a toutes les lignes."}
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label>Jour{!editing && 's'}</Label>
-              <div className="grid grid-cols-3 gap-2 rounded-md border border-input p-3">
-                {DAYS.map((day) => (
-                  <label key={day.value} className="flex items-center gap-2 text-sm">
-                    <Checkbox
-                      checked={selectedDays.includes(day.value)}
-                      onCheckedChange={(checked) => toggleDay(day.value, Boolean(checked))}
-                    />
-                    {day.label}
-                  </label>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </div>
-            </div>
+              </TableBody>
+            </Table>
+          </div>
+        )}
 
-            <div className="flex flex-col gap-1.5">
-              <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2">
-                <Label className="text-xs text-muted-foreground">Ordre dans la journee</Label>
-                <Label className="text-xs text-muted-foreground">Heure de debut</Label>
-                <Label className="text-xs text-muted-foreground">Heure de fin</Label>
-                <span />
-              </div>
-              {slotRows.map((row, index) => (
-                <div key={index} className="grid grid-cols-[1fr_1fr_1fr_auto] items-center gap-2">
-                  <Input
-                    type="number"
-                    min={0}
-                    required
-                    aria-label="Ordre dans la journee"
-                    value={row.orderIndex}
-                    onChange={(e) => updateRow(index, 'orderIndex', e.target.value)}
-                  />
-                  <Input
-                    type="time"
-                    required
-                    aria-label="Heure de debut"
-                    value={row.startTime}
-                    onChange={(e) => updateRow(index, 'startTime', e.target.value)}
-                  />
-                  <Input
-                    type="time"
-                    required
-                    aria-label="Heure de fin"
-                    value={row.endTime}
-                    onChange={(e) => updateRow(index, 'endTime', e.target.value)}
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    disabled={slotRows.length <= 1}
-                    onClick={() => removeRow(index)}
-                  >
-                    <X className="size-4" />
-                  </Button>
-                </div>
-              ))}
-              {!editing && (
-                <Button type="button" variant="outline" size="sm" onClick={addRow} className="w-fit">
-                  <Plus className="size-4" />
-                  Ajouter une ligne
-                </Button>
-              )}
-              {!editing && previewCount > 1 && (
-                <Badge variant="secondary" className="w-fit">
-                  {previewCount} creneaux seront crees ({selectedDays.length} jour(s) x {slotRows.length}{' '}
-                  ligne(s))
-                </Badge>
-              )}
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="kind">Type (applique a toutes les lignes)</Label>
-              <Select value={kind} onValueChange={setKind}>
-                <SelectTrigger id="kind" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {KINDS.map((k) => (
-                    <SelectItem key={k.value} value={k.value}>
-                      {k.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <DialogFooter>
-              <Button type="submit" disabled={saving}>
-                {saving ? 'Enregistrement...' : 'Enregistrer'}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+        <div className="flex items-center justify-between">
+          <Button type="button" variant="outline" size="sm" onClick={addRow}>
+            <Plus className="size-4" />
+            Ajouter une ligne
+          </Button>
+          <Button onClick={handleSave} disabled={saving}>
+            {saving ? 'Enregistrement...' : 'Enregistrer la grille'}
+          </Button>
+        </div>
+      </CardContent>
     </Card>
   )
 }
