@@ -7,10 +7,13 @@ export type ScheduleContext = {
   levels: Tables<'levels'>[]
   subjects: Tables<'subjects'>[]
   teachers: Tables<'teachers'>[]
-  teachingGroups: Tables<'teaching_groups'>[]
-  groupClasses: { group_id: string; class_id: string }[]
-  groupTeachers: { group_id: string; teacher_id: string }[]
+  teacherSubjects: { teacher_id: string; subject_id: string }[]
+  teacherLevels: { teacher_id: string; level_id: string }[]
+  teacherUnavailability: Tables<'teacher_unavailability'>[]
+  curriculumItems: Tables<'curriculum_items'>[]
   entries: Tables<'schedule_entries'>[]
+  entryClasses: { entry_id: string; class_id: string }[]
+  settings: Tables<'establishment_settings'> | null
 }
 
 export type ViolationSeverity = 'hard' | 'soft'

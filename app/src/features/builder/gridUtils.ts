@@ -1,9 +1,4 @@
-import {
-  classesOfGroup,
-  entriesWithGroups,
-  remainingSessionsForGroup,
-  teachersOfGroup,
-} from '@/lib/constraints/helpers'
+import { chunkRemainingHours, qualifiedTeacherIds, remainingHoursForClassSubject } from '@/lib/constraints/helpers'
 import type { ScheduleContext } from '@/lib/constraints/types'
 
 export const DAY_LABELS: Record<number, string> = {
@@ -48,6 +43,14 @@ export type CellContent = {
   subjectCode: string
 }
 
+function classesByEntryMap(ctx: ScheduleContext): Map<string, string[]> {
+  const map = new Map<string, string[]>()
+  for (const ec of ctx.entryClasses) {
+    map.set(ec.entry_id, [...(map.get(ec.entry_id) ?? []), ec.class_id])
+  }
+  return map
+}
+
 /** Renvoie l'entree occupant (day, orderIndex) pour l'entite selectionnee, selon la vue. */
 export function cellContentFor(
   ctx: ScheduleContext,
@@ -56,65 +59,76 @@ export function cellContentFor(
   day: number,
   orderIndex: number,
 ): CellContent | undefined {
-  const entries = entriesWithGroups(ctx)
-  const entry = entries.find((e) => {
+  const classesByEntry = classesByEntryMap(ctx)
+  const entry = ctx.entries.find((e) => {
     if (e.day_of_week !== day) return false
     if (orderIndex < e.start_slot_order || orderIndex >= e.start_slot_order + e.slot_count) return false
-    if (view === 'class') return classesOfGroup(ctx, e.teaching_group_id).includes(entityId)
-    if (view === 'teacher') return teachersOfGroup(ctx, e.teaching_group_id).includes(entityId)
+    if (view === 'class') return (classesByEntry.get(e.id) ?? []).includes(entityId)
+    if (view === 'teacher') return e.teacher_id === entityId
     return e.room_id === entityId
   })
   if (!entry) return undefined
 
-  const subject = ctx.subjects.find((s) => s.id === entry.group.subject_id)
+  const subject = ctx.subjects.find((s) => s.id === entry.subject_id)
   const subjectCode = subject?.code ?? '?'
+  const classNames = (classesByEntry.get(entry.id) ?? [])
+    .map((id) => ctx.classes.find((c) => c.id === id)?.name)
+    .filter(Boolean)
+    .join('+')
 
   let label: string
   if (view === 'class') {
     const room = ctx.rooms.find((r) => r.id === entry.room_id)
     label = `${subjectCode} (${room?.name ?? '?'})`
   } else if (view === 'teacher') {
-    const classNames = classesOfGroup(ctx, entry.teaching_group_id)
-      .map((id) => ctx.classes.find((c) => c.id === id)?.name)
-      .filter(Boolean)
-      .join('+')
     const room = ctx.rooms.find((r) => r.id === entry.room_id)
     label = `${classNames} (${room?.name ?? '?'})`
   } else {
-    const classNames = classesOfGroup(ctx, entry.teaching_group_id)
-      .map((id) => ctx.classes.find((c) => c.id === id)?.name)
-      .filter(Boolean)
-      .join('+')
     label = `${classNames} (${subjectCode})`
   }
 
   return { entryId: entry.id, label, subjectCode }
 }
 
-export type PendingSession = {
-  groupId: string
-  groupLabel: string
+export type PendingNeed = {
+  classId: string
+  className: string
+  subjectId: string
   subjectCode: string
-  length: number
-  index: number
+  remainingHours: number
+  qualifiedTeacherIds: string[]
+  /** Duree (en creneaux) de la prochaine seance, selon la repartition configuree (ex. 2+1+1+1). */
+  nextSessionLength: number
 }
 
-export function pendingSessionsForGroups(ctx: ScheduleContext, groupIds: string[]): PendingSession[] {
-  const pending: PendingSession[] = []
-  for (const groupId of groupIds) {
-    const group = ctx.teachingGroups.find((g) => g.id === groupId)
-    if (!group) continue
-    const remaining = remainingSessionsForGroup(ctx, groupId)
-    const subject = ctx.subjects.find((s) => s.id === group.subject_id)
-    remaining.forEach((length, i) => {
-      pending.push({
-        groupId,
-        groupLabel: group.label,
-        subjectCode: subject?.code ?? '?',
-        length,
-        index: i,
+/**
+ * Besoins restants (volume horaire du niveau non encore couvert) pour un
+ * ensemble de classes -- une ligne par (classe, matiere). Sans notion de
+ * groupe pedagogique, le decoupage en seances et le choix du professeur se
+ * font desormais au moment du depot (voir PendingSessionChip).
+ */
+export function pendingNeedsForClasses(ctx: ScheduleContext, classIds: string[]): PendingNeed[] {
+  const needs: PendingNeed[] = []
+  for (const classId of classIds) {
+    const cls = ctx.classes.find((c) => c.id === classId)
+    if (!cls) continue
+    const items = ctx.curriculumItems.filter((c) => c.level_id === cls.level_id)
+    for (const item of items) {
+      const remaining = remainingHoursForClassSubject(ctx, classId, item.subject_id)
+      if (remaining <= 0) continue
+      const subject = ctx.subjects.find((s) => s.id === item.subject_id)
+      const subjectCode = subject?.code ?? '?'
+      const chunks = chunkRemainingHours(ctx, classId, item.subject_id, subjectCode, remaining)
+      needs.push({
+        classId,
+        className: cls.name,
+        subjectId: item.subject_id,
+        subjectCode,
+        remainingHours: remaining,
+        qualifiedTeacherIds: qualifiedTeacherIds(ctx, item.subject_id, cls.level_id),
+        nextSessionLength: chunks[0] ?? Math.min(2, remaining),
       })
-    })
+    }
   }
-  return pending
+  return needs
 }

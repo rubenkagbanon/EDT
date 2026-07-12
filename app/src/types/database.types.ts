@@ -127,6 +127,7 @@ export type Database = {
           establishment_id: string
           id: string
           level_id: string
+          session_pattern: number[] | null
           subject_id: string
           weekly_hours: number
         }
@@ -134,6 +135,7 @@ export type Database = {
           establishment_id?: string
           id?: string
           level_id: string
+          session_pattern?: number[] | null
           subject_id: string
           weekly_hours?: number
         }
@@ -141,6 +143,7 @@ export type Database = {
           establishment_id?: string
           id?: string
           level_id?: string
+          session_pattern?: number[] | null
           subject_id?: string
           weekly_hours?: number
         }
@@ -164,6 +167,44 @@ export type Database = {
             columns: ['subject_id']
             isOneToOne: false
             referencedRelation: 'subjects'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      establishment_settings: {
+        Row: {
+          establishment_id: string
+          etaler: boolean
+          grille_stricte: boolean
+          lourdes_matin: boolean
+          matieres_lourdes: string[]
+          max_meme_matiere_jour: number
+          respecter_indispos: boolean
+        }
+        Insert: {
+          establishment_id: string
+          etaler?: boolean
+          grille_stricte?: boolean
+          lourdes_matin?: boolean
+          matieres_lourdes?: string[]
+          max_meme_matiere_jour?: number
+          respecter_indispos?: boolean
+        }
+        Update: {
+          establishment_id?: string
+          etaler?: boolean
+          grille_stricte?: boolean
+          lourdes_matin?: boolean
+          matieres_lourdes?: string[]
+          max_meme_matiere_jour?: number
+          respecter_indispos?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'establishment_settings_establishment_id_fkey'
+            columns: ['establishment_id']
+            isOneToOne: true
+            referencedRelation: 'establishments'
             referencedColumns: ['id']
           },
         ]
@@ -297,30 +338,36 @@ export type Database = {
           day_of_week: number
           establishment_id: string
           id: string
+          paired_entry_id: string | null
           room_id: string | null
           slot_count: number
           start_slot_order: number
-          teaching_group_id: string
+          subject_id: string
+          teacher_id: string
         }
         Insert: {
           academic_year_id: string
           day_of_week: number
           establishment_id?: string
           id?: string
+          paired_entry_id?: string | null
           room_id?: string | null
           slot_count?: number
           start_slot_order: number
-          teaching_group_id: string
+          subject_id: string
+          teacher_id: string
         }
         Update: {
           academic_year_id?: string
           day_of_week?: number
           establishment_id?: string
           id?: string
+          paired_entry_id?: string | null
           room_id?: string | null
           slot_count?: number
           start_slot_order?: number
-          teaching_group_id?: string
+          subject_id?: string
+          teacher_id?: string
         }
         Relationships: [
           {
@@ -338,6 +385,13 @@ export type Database = {
             referencedColumns: ['id']
           },
           {
+            foreignKeyName: 'schedule_entries_paired_entry_id_fkey'
+            columns: ['paired_entry_id']
+            isOneToOne: false
+            referencedRelation: 'schedule_entries'
+            referencedColumns: ['id']
+          },
+          {
             foreignKeyName: 'schedule_entries_room_id_fkey'
             columns: ['room_id']
             isOneToOne: false
@@ -345,10 +399,57 @@ export type Database = {
             referencedColumns: ['id']
           },
           {
-            foreignKeyName: 'schedule_entries_teaching_group_id_fkey'
-            columns: ['teaching_group_id']
+            foreignKeyName: 'schedule_entries_subject_id_fkey'
+            columns: ['subject_id']
             isOneToOne: false
-            referencedRelation: 'teaching_groups'
+            referencedRelation: 'subjects'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'schedule_entries_teacher_id_fkey'
+            columns: ['teacher_id']
+            isOneToOne: false
+            referencedRelation: 'teachers'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      schedule_entry_classes: {
+        Row: {
+          class_id: string
+          entry_id: string
+          establishment_id: string
+        }
+        Insert: {
+          class_id: string
+          entry_id: string
+          establishment_id?: string
+        }
+        Update: {
+          class_id?: string
+          entry_id?: string
+          establishment_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'schedule_entry_classes_class_id_fkey'
+            columns: ['class_id']
+            isOneToOne: false
+            referencedRelation: 'classes'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'schedule_entry_classes_entry_id_fkey'
+            columns: ['entry_id']
+            isOneToOne: false
+            referencedRelation: 'schedule_entries'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'schedule_entry_classes_establishment_id_fkey'
+            columns: ['establishment_id']
+            isOneToOne: false
+            referencedRelation: 'establishments'
             referencedColumns: ['id']
           },
         ]
@@ -381,6 +482,46 @@ export type Database = {
             columns: ['establishment_id']
             isOneToOne: false
             referencedRelation: 'establishments'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      teacher_levels: {
+        Row: {
+          establishment_id: string
+          level_id: string
+          teacher_id: string
+        }
+        Insert: {
+          establishment_id?: string
+          level_id: string
+          teacher_id: string
+        }
+        Update: {
+          establishment_id?: string
+          level_id?: string
+          teacher_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'teacher_levels_establishment_id_fkey'
+            columns: ['establishment_id']
+            isOneToOne: false
+            referencedRelation: 'establishments'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'teacher_levels_level_id_fkey'
+            columns: ['level_id']
+            isOneToOne: false
+            referencedRelation: 'levels'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'teacher_levels_teacher_id_fkey'
+            columns: ['teacher_id']
+            isOneToOne: false
+            referencedRelation: 'teachers'
             referencedColumns: ['id']
           },
         ]
@@ -425,6 +566,45 @@ export type Database = {
           },
         ]
       }
+      teacher_unavailability: {
+        Row: {
+          day_of_week: number
+          establishment_id: string
+          id: string
+          order_index: number
+          teacher_id: string
+        }
+        Insert: {
+          day_of_week: number
+          establishment_id?: string
+          id?: string
+          order_index: number
+          teacher_id: string
+        }
+        Update: {
+          day_of_week?: number
+          establishment_id?: string
+          id?: string
+          order_index?: number
+          teacher_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'teacher_unavailability_establishment_id_fkey'
+            columns: ['establishment_id']
+            isOneToOne: false
+            referencedRelation: 'establishments'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'teacher_unavailability_teacher_id_fkey'
+            columns: ['teacher_id']
+            isOneToOne: false
+            referencedRelation: 'teachers'
+            referencedColumns: ['id']
+          },
+        ]
+      }
       teachers: {
         Row: {
           establishment_id: string
@@ -450,135 +630,6 @@ export type Database = {
             columns: ['establishment_id']
             isOneToOne: false
             referencedRelation: 'establishments'
-            referencedColumns: ['id']
-          },
-        ]
-      }
-      teaching_group_classes: {
-        Row: {
-          class_id: string
-          establishment_id: string
-          group_id: string
-        }
-        Insert: {
-          class_id: string
-          establishment_id?: string
-          group_id: string
-        }
-        Update: {
-          class_id?: string
-          establishment_id?: string
-          group_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: 'teaching_group_classes_class_id_fkey'
-            columns: ['class_id']
-            isOneToOne: false
-            referencedRelation: 'classes'
-            referencedColumns: ['id']
-          },
-          {
-            foreignKeyName: 'teaching_group_classes_establishment_id_fkey'
-            columns: ['establishment_id']
-            isOneToOne: false
-            referencedRelation: 'establishments'
-            referencedColumns: ['id']
-          },
-          {
-            foreignKeyName: 'teaching_group_classes_group_id_fkey'
-            columns: ['group_id']
-            isOneToOne: false
-            referencedRelation: 'teaching_groups'
-            referencedColumns: ['id']
-          },
-        ]
-      }
-      teaching_group_teachers: {
-        Row: {
-          establishment_id: string
-          group_id: string
-          teacher_id: string
-        }
-        Insert: {
-          establishment_id?: string
-          group_id: string
-          teacher_id: string
-        }
-        Update: {
-          establishment_id?: string
-          group_id?: string
-          teacher_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: 'teaching_group_teachers_establishment_id_fkey'
-            columns: ['establishment_id']
-            isOneToOne: false
-            referencedRelation: 'establishments'
-            referencedColumns: ['id']
-          },
-          {
-            foreignKeyName: 'teaching_group_teachers_group_id_fkey'
-            columns: ['group_id']
-            isOneToOne: false
-            referencedRelation: 'teaching_groups'
-            referencedColumns: ['id']
-          },
-          {
-            foreignKeyName: 'teaching_group_teachers_teacher_id_fkey'
-            columns: ['teacher_id']
-            isOneToOne: false
-            referencedRelation: 'teachers'
-            referencedColumns: ['id']
-          },
-        ]
-      }
-      teaching_groups: {
-        Row: {
-          establishment_id: string
-          id: string
-          label: string
-          paired_group_id: string | null
-          session_slot_lengths: number[]
-          subject_id: string
-        }
-        Insert: {
-          establishment_id?: string
-          id?: string
-          label: string
-          paired_group_id?: string | null
-          session_slot_lengths?: number[]
-          subject_id: string
-        }
-        Update: {
-          establishment_id?: string
-          id?: string
-          label?: string
-          paired_group_id?: string | null
-          session_slot_lengths?: number[]
-          subject_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: 'teaching_groups_establishment_id_fkey'
-            columns: ['establishment_id']
-            isOneToOne: false
-            referencedRelation: 'establishments'
-            referencedColumns: ['id']
-          },
-          {
-            foreignKeyName: 'teaching_groups_paired_group_id_fkey'
-            columns: ['paired_group_id']
-            isOneToOne: false
-            referencedRelation: 'teaching_groups'
-            referencedColumns: ['id']
-          },
-          {
-            foreignKeyName: 'teaching_groups_subject_id_fkey'
-            columns: ['subject_id']
-            isOneToOne: false
-            referencedRelation: 'subjects'
             referencedColumns: ['id']
           },
         ]
@@ -661,8 +712,10 @@ export type Tables<
     }
     ? R
     : never
-  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema['Tables'] & DefaultSchema['Views'])
-    ? (DefaultSchema['Tables'] & DefaultSchema['Views'])[DefaultSchemaTableNameOrOptions] extends {
+  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema['Tables'] &
+        DefaultSchema['Views'])
+    ? (DefaultSchema['Tables'] &
+        DefaultSchema['Views'])[DefaultSchemaTableNameOrOptions] extends {
         Row: infer R
       }
       ? R
@@ -718,3 +771,43 @@ export type TablesUpdate<
       ? U
       : never
     : never
+
+export type Enums<
+  DefaultSchemaEnumNameOrOptions extends
+    | keyof DefaultSchema['Enums']
+    | { schema: keyof DatabaseWithoutInternals },
+  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions['schema']]['Enums']
+    : never = never,
+> = DefaultSchemaEnumNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions['schema']]['Enums'][EnumName]
+  : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema['Enums']
+    ? DefaultSchema['Enums'][DefaultSchemaEnumNameOrOptions]
+    : never
+
+export type CompositeTypes<
+  PublicCompositeTypeNameOrOptions extends
+    | keyof DefaultSchema['CompositeTypes']
+    | { schema: keyof DatabaseWithoutInternals },
+  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions['schema']]['CompositeTypes']
+    : never = never,
+> = PublicCompositeTypeNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions['schema']]['CompositeTypes'][CompositeTypeName]
+  : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema['CompositeTypes']
+    ? DefaultSchema['CompositeTypes'][PublicCompositeTypeNameOrOptions]
+    : never
+
+export const Constants = {
+  public: {
+    Enums: {},
+  },
+} as const

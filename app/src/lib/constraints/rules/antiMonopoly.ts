@@ -1,4 +1,4 @@
-import { classesOfGroup, entriesWithGroups, teachersOfGroup } from '@/lib/constraints/helpers'
+import { entriesWithClasses } from '@/lib/constraints/helpers'
 import type { ScheduleContext, Violation } from '@/lib/constraints/types'
 
 /**
@@ -7,21 +7,17 @@ import type { ScheduleContext, Violation } from '@/lib/constraints/types'
  */
 export function antiMonopoly(ctx: ScheduleContext): Violation[] {
   const violations: Violation[] = []
-  const entries = entriesWithGroups(ctx)
+  const entries = entriesWithClasses(ctx)
 
   // classes couvertes par (enseignant, matiere), agregees par niveau
   const coverage = new Map<string, { classIds: Set<string>; entryIds: string[] }>()
 
   for (const entry of entries) {
-    const classIds = classesOfGroup(ctx, entry.teaching_group_id)
-    const teacherIds = teachersOfGroup(ctx, entry.teaching_group_id)
-    for (const teacherId of teacherIds) {
-      const key = `${teacherId}::${entry.group.subject_id}`
-      const acc = coverage.get(key) ?? { classIds: new Set(), entryIds: [] }
-      classIds.forEach((c) => acc.classIds.add(c))
-      acc.entryIds.push(entry.id)
-      coverage.set(key, acc)
-    }
+    const key = `${entry.teacher_id}::${entry.subject_id}`
+    const acc = coverage.get(key) ?? { classIds: new Set(), entryIds: [] }
+    entry.classIds.forEach((c) => acc.classIds.add(c))
+    acc.entryIds.push(entry.id)
+    coverage.set(key, acc)
   }
 
   const classesByLevel = new Map<string, Set<string>>()

@@ -38,7 +38,9 @@ const RULE_LABELS: Record<string, string> = {
   sequencing_min_subjects: 'Moins de 3 matieres dans la journee',
   eps_placement: 'EPS mal positionnee',
   gaps_sandwiched: 'Heure creuse encadree',
-  paired_group_simultaneity: 'Tandem/LV2 non simultanes',
+  paired_entry_simultaneity: 'Tandem/LV2 non simultanes',
+  teacher_availability: 'Indisponibilite enseignant non respectee',
+  heavy_subject_afternoon: 'Matiere lourde placee l\'apres-midi',
 }
 
 export default function ReportPage() {

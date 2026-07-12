@@ -1,4 +1,4 @@
-import { classesOfGroup, entriesWithGroups } from '@/lib/constraints/helpers'
+import { entriesWithClasses } from '@/lib/constraints/helpers'
 import type { ScheduleContext, Violation } from '@/lib/constraints/types'
 
 type ClassDaySession = {
@@ -11,18 +11,21 @@ type ClassDaySession = {
 
 /**
  * Sequencage pedagogique : pas 2 matieres "langues" d'affilee, pas 2 "sciences"
- * d'affilee, pas 2 seances de la meme matiere le meme jour, >= 3 matieres/jour.
+ * d'affilee, pas trop de seances de la meme matiere le meme jour (seuil
+ * configurable via les reglages avances), >= 3 matieres/jour.
  */
 export function sequencing(ctx: ScheduleContext): Violation[] {
   const violations: Violation[] = []
-  const entries = entriesWithGroups(ctx)
+  const entries = entriesWithClasses(ctx)
+  const etaler = ctx.settings?.etaler ?? true
+  const maxMemeMatiereJour = ctx.settings?.max_meme_matiere_jour ?? 2
 
   const byClassDay = new Map<string, ClassDaySession[]>()
 
   for (const entry of entries) {
-    const subject = ctx.subjects.find((s) => s.id === entry.group.subject_id)
+    const subject = ctx.subjects.find((s) => s.id === entry.subject_id)
     if (!subject) continue
-    for (const classId of classesOfGroup(ctx, entry.teaching_group_id)) {
+    for (const classId of entry.classIds) {
       const key = `${classId}::${entry.day_of_week}`
       const list = byClassDay.get(key) ?? []
       list.push({
@@ -65,20 +68,23 @@ export function sequencing(ctx: ScheduleContext): Violation[] {
       }
     }
 
-    // Meme matiere 2 fois dans la journee.
-    const bySubject = new Map<string, string[]>()
-    for (const s of sessions) {
-      bySubject.set(s.subjectId, [...(bySubject.get(s.subjectId) ?? []), s.entryId])
-    }
-    for (const [subjectId, entryIds] of bySubject) {
-      if (entryIds.length > 1) {
-        const subject = ctx.subjects.find((s) => s.id === subjectId)
-        violations.push({
-          ruleCode: 'sequencing_same_subject_twice',
-          severity: 'soft',
-          message: `${cls.name} : ${subject?.name ?? subjectId} programmee 2 fois le meme jour.`,
-          entryIds,
-        })
+    // Meme matiere trop de fois dans la journee (seuil configurable, regle
+    // desactivee si "etaler" est faux dans les reglages avances).
+    if (etaler) {
+      const bySubject = new Map<string, string[]>()
+      for (const s of sessions) {
+        bySubject.set(s.subjectId, [...(bySubject.get(s.subjectId) ?? []), s.entryId])
+      }
+      for (const [subjectId, entryIds] of bySubject) {
+        if (entryIds.length > maxMemeMatiereJour) {
+          const subject = ctx.subjects.find((s) => s.id === subjectId)
+          violations.push({
+            ruleCode: 'sequencing_same_subject_twice',
+            severity: 'soft',
+            message: `${cls.name} : ${subject?.name ?? subjectId} programmee ${entryIds.length}x le meme jour (max ${maxMemeMatiereJour}).`,
+            entryIds,
+          })
+        }
       }
     }
 

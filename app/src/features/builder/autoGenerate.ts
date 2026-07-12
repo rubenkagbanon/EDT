@@ -1,19 +1,24 @@
-import { classesOfGroup, courseSlotsForDay, remainingSessionsForGroup, teachersOfGroup } from '@/lib/constraints/helpers'
+import {
+  chunkRemainingHours,
+  courseSlotsForDay,
+  qualifiedTeacherIds,
+  remainingHoursForClassSubject,
+} from '@/lib/constraints/helpers'
 import type { ScheduleContext } from '@/lib/constraints/types'
 import type { Tables, TablesInsert } from '@/types/database.types'
 
 export type AutoGenerateResult = {
   newEntries: TablesInsert<'schedule_entries'>[]
+  newEntryClasses: TablesInsert<'schedule_entry_classes'>[]
   placedCount: number
   unplacedCount: number
 }
 
-type PlacementUnit = {
-  groupId: string
-  pairedGroupId: string | null
-  length: number
+type Unit = {
+  classId: string
   subjectId: string
   subjectCode: string
+  length: number
 }
 
 const RESTARTS = 6
@@ -41,17 +46,23 @@ function isRangeBusy(map: Map<string, Set<number>>, key: string, start: number, 
   return false
 }
 
-function markIdsBusy(map: Map<string, Set<number>>, ids: string[], day: number, start: number, count: number) {
-  for (const id of ids) {
-    const key = `${id}:${day}`
-    const set = map.get(key) ?? new Set<number>()
-    markRange(set, start, count)
-    map.set(key, set)
+function buildUnits(ctx: ScheduleContext): Unit[] {
+  const units: Unit[] = []
+  for (const cls of ctx.classes) {
+    const level = ctx.levels.find((l) => l.id === cls.level_id)
+    if (!level) continue
+    const itemsForLevel = ctx.curriculumItems.filter((c) => c.level_id === level.id)
+    for (const item of itemsForLevel) {
+      const remaining = remainingHoursForClassSubject(ctx, cls.id, item.subject_id)
+      if (remaining <= 0) continue
+      const subject = ctx.subjects.find((s) => s.id === item.subject_id)
+      const subjectCode = subject?.code ?? ''
+      for (const length of chunkRemainingHours(ctx, cls.id, item.subject_id, subjectCode, remaining)) {
+        units.push({ classId: cls.id, subjectId: item.subject_id, subjectCode, length })
+      }
+    }
   }
-}
-
-function anyIdBusy(map: Map<string, Set<number>>, ids: string[], day: number, start: number, count: number) {
-  return ids.some((id) => isRangeBusy(map, `${id}:${day}`, start, count))
+  return units
 }
 
 /** Fenetres EPS : les 2 premiers ou 2 derniers creneaux "cours" de la journee (miroir de epsPlacement). */
@@ -78,15 +89,10 @@ function slidingWindows(daySlots: Tables<'time_slots'>[], length: number): numbe
   return starts
 }
 
-/** Meme ordre de priorite que `defaultRoomFor` (BuilderPage), mais une liste complete de candidats. */
-function pickRoomCandidates(ctx: ScheduleContext, subjectCode: string, isPaired: boolean): string[] {
+/** Meme ordre de priorite que le selecteur de salle du builder. */
+function pickRoomCandidates(ctx: ScheduleContext, subjectCode: string): string[] {
   if (subjectCode === 'EPS') {
     return ctx.rooms.filter((r) => r.room_type === 'terrain').map((r) => r.id)
-  }
-  if (isPaired) {
-    const labs = ctx.rooms.filter((r) => r.room_type === 'laboratoire').map((r) => r.id)
-    if (labs.length >= 2) return labs
-    return ctx.rooms.map((r) => r.id)
   }
   const principal = ctx.rooms.filter((r) => r.room_type === 'salle_principale').map((r) => r.id)
   if (principal.length > 0) return principal
@@ -95,29 +101,15 @@ function pickRoomCandidates(ctx: ScheduleContext, subjectCode: string, isPaired:
   return ctx.rooms.map((r) => r.id)
 }
 
-function exceedsCeiling(
-  ctx: ScheduleContext,
-  teacherIds: string[],
-  teacherHours: Map<string, number>,
-  addLength: number,
-): boolean {
-  return teacherIds.some((tid) => {
-    const teacher = ctx.teachers.find((t) => t.id === tid)
-    if (!teacher) return false
-    const current = teacherHours.get(tid) ?? 0
-    return current + addLength > teacher.max_weekly_hours
-  })
-}
-
 const CHAINABLE_GROUPS = new Set(['langues', 'sciences'])
 
 /**
- * Cout souple d'un placement candidat pour une classe donnee : mirroring
- * (approximatif, cout local rapide) des regles `sequencing` et
- * `gapsPlacement` -- la validation faisant autorite reste `runAllRules`
- * apres insertion.
+ * Cout souple d'un placement candidat : mirroring (approximatif, cout local
+ * rapide) des regles sequencing/gapsPlacement/heavySubjectsMorning -- la
+ * validation faisant autorite reste `runAllRules` apres insertion.
  */
-function softCostForClass(
+function softCost(
+  ctx: ScheduleContext,
   daySlots: Tables<'time_slots'>[],
   busy: Set<number>,
   subjectAtSlot: Map<number, string>,
@@ -126,6 +118,7 @@ function softCostForClass(
   length: number,
   subjectId: string,
   subjectGroup: string,
+  day: number,
 ): number {
   let cost = 0
 
@@ -150,19 +143,26 @@ function softCostForClass(
     if (hasBefore && hasAfter) cost += 1
   }
 
+  if (ctx.settings?.lourdes_matin && ctx.settings.matieres_lourdes.includes(subjectId)) {
+    const matinMax = Math.floor(daySlots.length / 2)
+    const position = daySlots.findIndex((s) => s.order_index === start)
+    if (position >= matinMax) cost += 2
+  }
+
+  void day
   return cost
 }
 
 type RunResult = {
   newEntries: TablesInsert<'schedule_entries'>[]
+  newEntryClasses: TablesInsert<'schedule_entry_classes'>[]
   unplaced: number
   cost: number
 }
 
-function runOnce(ctx: ScheduleContext, academicYearId: string, units: PlacementUnit[], seed: number): RunResult {
+function runOnce(ctx: ScheduleContext, academicYearId: string, units: Unit[], seed: number): RunResult {
   const days = [...new Set(ctx.timeSlots.map((s) => s.day_of_week))].sort((a, b) => a - b)
   const daySlotsByDay = new Map(days.map((d) => [d, courseSlotsForDay(ctx, d)]))
-  const groupsById = new Map(ctx.teachingGroups.map((g) => [g.id, g]))
 
   const roomBusy = new Map<string, Set<number>>()
   const teacherBusy = new Map<string, Set<number>>()
@@ -170,6 +170,19 @@ function runOnce(ctx: ScheduleContext, academicYearId: string, units: PlacementU
   const teacherHours = new Map<string, number>()
   const classSubjectAtSlot = new Map<string, Map<number, string>>()
   const classSubjectGroupAtSlot = new Map<string, Map<number, string>>()
+  const unavailByTeacherDay = new Map<string, Set<number>>()
+
+  for (const u of ctx.teacherUnavailability) {
+    const key = `${u.teacher_id}:${u.day_of_week}`
+    const set = unavailByTeacherDay.get(key) ?? new Set<number>()
+    set.add(u.order_index)
+    unavailByTeacherDay.set(key, set)
+  }
+
+  const classesByEntry = new Map<string, string[]>()
+  for (const ec of ctx.entryClasses) {
+    classesByEntry.set(ec.entry_id, [...(classesByEntry.get(ec.entry_id) ?? []), ec.class_id])
+  }
 
   function recordClassSubject(classId: string, day: number, start: number, length: number, subjectId: string, subjectGroup: string) {
     const key = `${classId}:${day}`
@@ -183,24 +196,22 @@ function runOnce(ctx: ScheduleContext, academicYearId: string, units: PlacementU
     classSubjectGroupAtSlot.set(key, groupBySlot)
   }
 
+  function markBusyFor(map: Map<string, Set<number>>, id: string, day: number, start: number, count: number) {
+    const key = `${id}:${day}`
+    const set = map.get(key) ?? new Set<number>()
+    markRange(set, start, count)
+    map.set(key, set)
+  }
+
   for (const entry of ctx.entries) {
-    const group = groupsById.get(entry.teaching_group_id)
-    if (!group) continue
-    const subject = ctx.subjects.find((s) => s.id === group.subject_id)
-    if (entry.room_id) {
-      const set = roomBusy.get(`${entry.room_id}:${entry.day_of_week}`) ?? new Set<number>()
-      markRange(set, entry.start_slot_order, entry.slot_count)
-      roomBusy.set(`${entry.room_id}:${entry.day_of_week}`, set)
-    }
-    const teacherIds = teachersOfGroup(ctx, entry.teaching_group_id)
-    markIdsBusy(teacherBusy, teacherIds, entry.day_of_week, entry.start_slot_order, entry.slot_count)
-    for (const t of teacherIds) teacherHours.set(t, (teacherHours.get(t) ?? 0) + entry.slot_count)
-    const classIds = classesOfGroup(ctx, entry.teaching_group_id)
-    markIdsBusy(classBusy, classIds, entry.day_of_week, entry.start_slot_order, entry.slot_count)
-    if (subject) {
-      for (const classId of classIds) {
-        recordClassSubject(classId, entry.day_of_week, entry.start_slot_order, entry.slot_count, subject.id, subject.subject_group)
-      }
+    const subject = ctx.subjects.find((s) => s.id === entry.subject_id)
+    if (entry.room_id) markBusyFor(roomBusy, entry.room_id, entry.day_of_week, entry.start_slot_order, entry.slot_count)
+    markBusyFor(teacherBusy, entry.teacher_id, entry.day_of_week, entry.start_slot_order, entry.slot_count)
+    teacherHours.set(entry.teacher_id, (teacherHours.get(entry.teacher_id) ?? 0) + entry.slot_count)
+    const classIds = classesByEntry.get(entry.id) ?? []
+    for (const classId of classIds) {
+      markBusyFor(classBusy, classId, entry.day_of_week, entry.start_slot_order, entry.slot_count)
+      if (subject) recordClassSubject(classId, entry.day_of_week, entry.start_slot_order, entry.slot_count, subject.id, subject.subject_group)
     }
   }
 
@@ -209,164 +220,121 @@ function runOnce(ctx: ScheduleContext, academicYearId: string, units: PlacementU
     const aEPS = a.subjectCode === 'EPS'
     const bEPS = b.subjectCode === 'EPS'
     if (aEPS !== bEPS) return aEPS ? -1 : 1
-    const aPaired = a.pairedGroupId ? 1 : 0
-    const bPaired = b.pairedGroupId ? 1 : 0
-    if (aPaired !== bPaired) return bPaired - aPaired
     if (a.length !== b.length) return b.length - a.length
     return rng() - 0.5
   })
 
   const newEntries: TablesInsert<'schedule_entries'>[] = []
+  const newEntryClasses: TablesInsert<'schedule_entry_classes'>[] = []
   let unplaced = 0
   let totalCost = 0
 
+  const respectUnavailability = ctx.settings?.respecter_indispos ?? true
+
   for (const unit of ordered) {
-    const group = groupsById.get(unit.groupId)
-    if (!group) continue
-    const pairGroup = unit.pairedGroupId ? groupsById.get(unit.pairedGroupId) : undefined
-    const classIds = classesOfGroup(ctx, unit.groupId)
-    const teacherIds = teachersOfGroup(ctx, unit.groupId)
-    const pairClassIds = pairGroup ? classesOfGroup(ctx, pairGroup.id) : []
-    const pairTeacherIds = pairGroup ? teachersOfGroup(ctx, pairGroup.id) : []
-    const isEPS = unit.subjectCode === 'EPS'
-    const roomCandidates = pickRoomCandidates(ctx, unit.subjectCode, Boolean(pairGroup))
-
-    let best: { day: number; start: number; roomId: string | null; pairRoomId: string | null; cost: number } | null = null
-
-    for (const day of days) {
-      const daySlots = daySlotsByDay.get(day) ?? []
-      const windows = isEPS ? epsWindows(daySlots) : slidingWindows(daySlots, unit.length)
-
-      for (const start of windows) {
-        if (anyIdBusy(classBusy, classIds, day, start, unit.length)) continue
-        if (anyIdBusy(teacherBusy, teacherIds, day, start, unit.length)) continue
-        if (pairGroup) {
-          if (anyIdBusy(classBusy, pairClassIds, day, start, unit.length)) continue
-          if (anyIdBusy(teacherBusy, pairTeacherIds, day, start, unit.length)) continue
-        }
-        if (exceedsCeiling(ctx, teacherIds, teacherHours, unit.length)) continue
-        if (pairGroup && exceedsCeiling(ctx, pairTeacherIds, teacherHours, unit.length)) continue
-
-        for (const roomId of roomCandidates) {
-          if (isEPS && ctx.rooms.find((r) => r.id === roomId)?.room_type !== 'terrain') continue
-          if (isRangeBusy(roomBusy, `${roomId}:${day}`, start, unit.length)) continue
-
-          let pairRoomId: string | null = null
-          if (pairGroup) {
-            const secondRoom = roomCandidates.find(
-              (r) => r !== roomId && !isRangeBusy(roomBusy, `${r}:${day}`, start, unit.length),
-            )
-            if (!secondRoom) continue
-            pairRoomId = secondRoom
-          }
-
-          let cost = 0
-          for (const classId of classIds) {
-            const key = `${classId}:${day}`
-            cost += softCostForClass(
-              daySlots,
-              classBusy.get(key) ?? new Set<number>(),
-              classSubjectAtSlot.get(key) ?? new Map<number, string>(),
-              classSubjectGroupAtSlot.get(key) ?? new Map<number, string>(),
-              start,
-              unit.length,
-              unit.subjectId,
-              ctx.subjects.find((s) => s.id === unit.subjectId)?.subject_group ?? 'autre',
-            )
-          }
-          cost += rng() * 0.01
-
-          if (!best || cost < best.cost) {
-            best = { day, start, roomId, pairRoomId, cost }
-          }
-          break
-        }
-      }
+    const cls = ctx.classes.find((c) => c.id === unit.classId)
+    if (!cls) {
+      unplaced += 1
+      continue
     }
-
-    if (!best) {
+    const candidateTeachers = qualifiedTeacherIds(ctx, unit.subjectId, cls.level_id).sort(
+      (a, b) => (teacherHours.get(a) ?? 0) - (teacherHours.get(b) ?? 0),
+    )
+    if (candidateTeachers.length === 0) {
       unplaced += 1
       continue
     }
 
-    markIdsBusy(classBusy, classIds, best.day, best.start, unit.length)
-    markIdsBusy(teacherBusy, teacherIds, best.day, best.start, unit.length)
-    if (best.roomId) {
-      const set = roomBusy.get(`${best.roomId}:${best.day}`) ?? new Set<number>()
-      markRange(set, best.start, unit.length)
-      roomBusy.set(`${best.roomId}:${best.day}`, set)
-    }
-    for (const t of teacherIds) teacherHours.set(t, (teacherHours.get(t) ?? 0) + unit.length)
-    for (const classId of classIds) {
-      recordClassSubject(classId, best.day, best.start, unit.length, unit.subjectId, ctx.subjects.find((s) => s.id === unit.subjectId)?.subject_group ?? 'autre')
-    }
+    const isEPS = unit.subjectCode === 'EPS'
+    const roomCandidates = pickRoomCandidates(ctx, unit.subjectCode)
+    const subjectGroup = ctx.subjects.find((s) => s.id === unit.subjectId)?.subject_group ?? 'autre'
 
-    newEntries.push({
-      establishment_id: group.establishment_id,
-      academic_year_id: academicYearId,
-      teaching_group_id: unit.groupId,
-      day_of_week: best.day,
-      start_slot_order: best.start,
-      slot_count: unit.length,
-      room_id: best.roomId,
-    })
+    let placed = false
 
-    if (pairGroup) {
-      markIdsBusy(classBusy, pairClassIds, best.day, best.start, unit.length)
-      markIdsBusy(teacherBusy, pairTeacherIds, best.day, best.start, unit.length)
-      if (best.pairRoomId) {
-        const set = roomBusy.get(`${best.pairRoomId}:${best.day}`) ?? new Set<number>()
-        markRange(set, best.start, unit.length)
-        roomBusy.set(`${best.pairRoomId}:${best.day}`, set)
+    for (const teacherId of candidateTeachers) {
+      const teacher = ctx.teachers.find((t) => t.id === teacherId)
+      if (!teacher) continue
+
+      let best: { day: number; start: number; roomId: string | null; cost: number } | null = null
+
+      for (const day of days) {
+        const daySlots = daySlotsByDay.get(day) ?? []
+        const windows = isEPS ? epsWindows(daySlots) : slidingWindows(daySlots, unit.length)
+
+        for (const start of windows) {
+          if (isRangeBusy(classBusy, `${unit.classId}:${day}`, start, unit.length)) continue
+          if (isRangeBusy(teacherBusy, `${teacherId}:${day}`, start, unit.length)) continue
+          if ((teacherHours.get(teacherId) ?? 0) + unit.length > teacher.max_weekly_hours) continue
+          if (respectUnavailability && isRangeBusy(unavailByTeacherDay, `${teacherId}:${day}`, start, unit.length)) continue
+
+          for (const roomId of roomCandidates) {
+            if (isEPS && ctx.rooms.find((r) => r.id === roomId)?.room_type !== 'terrain') continue
+            if (isRangeBusy(roomBusy, `${roomId}:${day}`, start, unit.length)) continue
+
+            const key = `${unit.classId}:${day}`
+            const cost =
+              softCost(
+                ctx,
+                daySlots,
+                classBusy.get(key) ?? new Set<number>(),
+                classSubjectAtSlot.get(key) ?? new Map<number, string>(),
+                classSubjectGroupAtSlot.get(key) ?? new Map<number, string>(),
+                start,
+                unit.length,
+                unit.subjectId,
+                subjectGroup,
+                day,
+              ) + rng() * 0.01
+
+            if (!best || cost < best.cost) best = { day, start, roomId, cost }
+            break
+          }
+        }
       }
-      for (const t of pairTeacherIds) teacherHours.set(t, (teacherHours.get(t) ?? 0) + unit.length)
-      for (const classId of pairClassIds) {
-        recordClassSubject(classId, best.day, best.start, unit.length, pairGroup.subject_id, ctx.subjects.find((s) => s.id === pairGroup.subject_id)?.subject_group ?? 'autre')
-      }
 
-      newEntries.push({
-        establishment_id: pairGroup.establishment_id,
-        academic_year_id: academicYearId,
-        teaching_group_id: pairGroup.id,
-        day_of_week: best.day,
-        start_slot_order: best.start,
-        slot_count: unit.length,
-        room_id: best.pairRoomId,
-      })
+      if (best) {
+        const entryId = crypto.randomUUID()
+        markBusyFor(classBusy, unit.classId, best.day, best.start, unit.length)
+        markBusyFor(teacherBusy, teacherId, best.day, best.start, unit.length)
+        if (best.roomId) markBusyFor(roomBusy, best.roomId, best.day, best.start, unit.length)
+        teacherHours.set(teacherId, (teacherHours.get(teacherId) ?? 0) + unit.length)
+        recordClassSubject(unit.classId, best.day, best.start, unit.length, unit.subjectId, subjectGroup)
+
+        newEntries.push({
+          id: entryId,
+          establishment_id: cls.establishment_id,
+          academic_year_id: academicYearId,
+          subject_id: unit.subjectId,
+          teacher_id: teacherId,
+          day_of_week: best.day,
+          start_slot_order: best.start,
+          slot_count: unit.length,
+          room_id: best.roomId,
+        })
+        newEntryClasses.push({ entry_id: entryId, class_id: unit.classId })
+
+        totalCost += best.cost
+        placed = true
+        break
+      }
     }
 
-    totalCost += best.cost
+    if (!placed) unplaced += 1
   }
 
-  return { newEntries, unplaced, cost: totalCost }
+  return { newEntries, newEntryClasses, unplaced, cost: totalCost }
 }
 
 /**
  * Complete automatiquement les seances actuellement non placees, sans jamais
  * toucher aux entrees deja existantes -- un premier jet a ajuster ensuite
- * manuellement dans le builder. Recherche gloutonne a redemarrages
- * aleatoires ; les 4 regles dures pertinentes au placement (unicite,
- * plafond horaire, EPS, simultaneite tandem/LV2) sont respectees par
- * construction, les regles souples (sequencage, heures creuses) guident le
- * choix parmi les candidats valides. `runAllRules` reste la validation
- * faisant autorite une fois les entrees inserees.
+ * manuellement dans le builder. Chaque classe est placee independamment
+ * (pas de tronc commun ni de tandem generes automatiquement, comme le
+ * moteur du repo de reference "ChronosCI") ; ces cas restent une action
+ * manuelle dans le builder.
  */
 export function autoGenerateSchedule(ctx: ScheduleContext, academicYearId: string): AutoGenerateResult {
-  const units: PlacementUnit[] = []
-  for (const group of ctx.teachingGroups) {
-    if (group.paired_group_id && group.id > group.paired_group_id) continue
-    const subject = ctx.subjects.find((s) => s.id === group.subject_id)
-    const remaining = remainingSessionsForGroup(ctx, group.id)
-    for (const length of remaining) {
-      units.push({
-        groupId: group.id,
-        pairedGroupId: group.paired_group_id,
-        length,
-        subjectId: group.subject_id,
-        subjectCode: subject?.code ?? '',
-      })
-    }
-  }
+  const units = buildUnits(ctx)
 
   let best: RunResult | null = null
   for (let attempt = 0; attempt < RESTARTS; attempt++) {
@@ -377,8 +345,9 @@ export function autoGenerateSchedule(ctx: ScheduleContext, academicYearId: strin
   }
 
   const newEntries = best?.newEntries ?? []
+  const newEntryClasses = best?.newEntryClasses ?? []
   const unplacedCount = best?.unplaced ?? units.length
   const placedCount = units.length - unplacedCount
 
-  return { newEntries, placedCount, unplacedCount }
+  return { newEntries, newEntryClasses, placedCount, unplacedCount }
 }

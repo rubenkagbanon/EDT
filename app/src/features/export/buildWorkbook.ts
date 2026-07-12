@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx'
 
-import { classesOfGroup, entriesWithGroups, teachersOfGroup } from '@/lib/constraints/helpers'
+import { entriesWithClasses } from '@/lib/constraints/helpers'
 import { DAY_LABELS } from '@/features/builder/gridUtils'
 import type { ScheduleContext } from '@/lib/constraints/types'
 
@@ -10,18 +10,17 @@ function summarySheet(ctx: ScheduleContext) {
     { Indicateur: 'Enseignants', Valeur: ctx.teachers.length },
     { Indicateur: 'Salles', Valeur: ctx.rooms.length },
     { Indicateur: 'Matieres', Valeur: ctx.subjects.length },
-    { Indicateur: 'Groupes pedagogiques', Valeur: ctx.teachingGroups.length },
     { Indicateur: 'Seances placees', Valeur: ctx.entries.length },
   ]
 }
 
 function classesSheet(ctx: ScheduleContext) {
-  const entries = entriesWithGroups(ctx)
+  const entries = entriesWithClasses(ctx)
   const rows: Record<string, string | number>[] = []
   for (const cls of ctx.classes) {
     for (const entry of entries) {
-      if (!classesOfGroup(ctx, entry.teaching_group_id).includes(cls.id)) continue
-      const subject = ctx.subjects.find((s) => s.id === entry.group.subject_id)
+      if (!entry.classIds.includes(cls.id)) continue
+      const subject = ctx.subjects.find((s) => s.id === entry.subject_id)
       const room = ctx.rooms.find((r) => r.id === entry.room_id)
       rows.push({
         Classe: cls.name,
@@ -36,13 +35,14 @@ function classesSheet(ctx: ScheduleContext) {
 }
 
 function teachersSheet(ctx: ScheduleContext) {
-  const entries = entriesWithGroups(ctx)
+  const entries = entriesWithClasses(ctx)
   const rows: Record<string, string | number>[] = []
   for (const teacher of ctx.teachers) {
     for (const entry of entries) {
-      if (!teachersOfGroup(ctx, entry.teaching_group_id).includes(teacher.id)) continue
+      if (entry.teacher_id !== teacher.id) continue
       const room = ctx.rooms.find((r) => r.id === entry.room_id)
-      const classNames = classesOfGroup(ctx, entry.teaching_group_id)
+      const subject = ctx.subjects.find((s) => s.id === entry.subject_id)
+      const classNames = entry.classIds
         .map((id) => ctx.classes.find((c) => c.id === id)?.name)
         .filter(Boolean)
         .join('+')
@@ -51,7 +51,7 @@ function teachersSheet(ctx: ScheduleContext) {
         Jour: DAY_LABELS[entry.day_of_week] ?? entry.day_of_week,
         Debut: entry.start_slot_order,
         Duree_h: entry.slot_count,
-        Cellule: `${classNames} (${room?.name ?? '?'})`,
+        Cellule: `${classNames} (${subject?.code ?? '?'}, ${room?.name ?? '?'})`,
       })
     }
   }
@@ -61,13 +61,13 @@ function teachersSheet(ctx: ScheduleContext) {
 }
 
 function roomsSheet(ctx: ScheduleContext) {
-  const entries = entriesWithGroups(ctx)
+  const entries = entriesWithClasses(ctx)
   const rows: Record<string, string | number>[] = []
   for (const room of ctx.rooms) {
     for (const entry of entries) {
       if (entry.room_id !== room.id) continue
-      const subject = ctx.subjects.find((s) => s.id === entry.group.subject_id)
-      const classNames = classesOfGroup(ctx, entry.teaching_group_id)
+      const subject = ctx.subjects.find((s) => s.id === entry.subject_id)
+      const classNames = entry.classIds
         .map((id) => ctx.classes.find((c) => c.id === id)?.name)
         .filter(Boolean)
         .join('+')

@@ -23,7 +23,7 @@ import LevelsPage from '@/pages/app/setup/LevelsPage'
 import SubjectsPage from '@/pages/app/setup/SubjectsPage'
 import TeachersPage from '@/pages/app/setup/TeachersPage'
 import CurriculumPage from '@/pages/app/setup/CurriculumPage'
-import GroupsPage from '@/pages/app/setup/GroupsPage'
+import SettingsPage from '@/pages/app/setup/SettingsPage'
 
 function App() {
   return (
@@ -59,7 +59,7 @@ function App() {
           <Route path="setup/subjects" element={<SubjectsPage />} />
           <Route path="setup/teachers" element={<TeachersPage />} />
           <Route path="setup/curriculum" element={<CurriculumPage />} />
-          <Route path="setup/groups" element={<GroupsPage />} />
+          <Route path="setup/settings" element={<SettingsPage />} />
         </Route>
       </Route>
 

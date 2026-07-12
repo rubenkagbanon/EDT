@@ -7,7 +7,6 @@ import {
   BookOpen,
   Users,
   Table2,
-  Link2,
   Clock,
   CalendarRange,
   FileWarning,
@@ -15,6 +14,7 @@ import {
   LogOut,
   Menu,
   Wand2,
+  Settings,
 } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
@@ -48,7 +48,7 @@ function useNavItems(establishmentId: string): NavItem[] {
     { to: `${base}/setup/subjects`, label: 'Matieres', icon: BookOpen, roles: ['admin', 'scheduler'] },
     { to: `${base}/setup/teachers`, label: 'Enseignants', icon: Users, roles: ['admin', 'scheduler'] },
     { to: `${base}/setup/curriculum`, label: 'Volumes horaires', icon: Table2, roles: ['admin', 'scheduler'] },
-    { to: `${base}/setup/groups`, label: 'Groupes pedagogiques', icon: Link2, roles: ['admin', 'scheduler'] },
+    { to: `${base}/setup/settings`, label: 'Reglages avances', icon: Settings, roles: ['admin', 'scheduler'] },
   ]
 }
 

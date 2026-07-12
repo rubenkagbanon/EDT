@@ -5,7 +5,9 @@ import { antiMonopoly } from '@/lib/constraints/rules/antiMonopoly'
 import { sequencing } from '@/lib/constraints/rules/sequencing'
 import { epsPlacement } from '@/lib/constraints/rules/epsPlacement'
 import { gapsPlacement } from '@/lib/constraints/rules/gapsPlacement'
-import { pairedGroupSimultaneity } from '@/lib/constraints/rules/pairedGroupSimultaneity'
+import { pairedEntrySimultaneity } from '@/lib/constraints/rules/pairedEntrySimultaneity'
+import { teacherAvailability } from '@/lib/constraints/rules/teacherAvailability'
+import { heavySubjectsMorning } from '@/lib/constraints/rules/heavySubjectsMorning'
 import { ruleSortOrder, type ScheduleContext, type Violation } from '@/lib/constraints/types'
 
 const RULES: Array<(ctx: ScheduleContext) => Violation[]> = [
@@ -16,7 +18,9 @@ const RULES: Array<(ctx: ScheduleContext) => Violation[]> = [
   sequencing,
   epsPlacement,
   gapsPlacement,
-  pairedGroupSimultaneity,
+  pairedEntrySimultaneity,
+  teacherAvailability,
+  heavySubjectsMorning,
 ]
 
 export function runAllRules(ctx: ScheduleContext): Violation[] {

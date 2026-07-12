@@ -1,13 +1,12 @@
-import { courseSlotsForDay, entriesWithGroups } from '@/lib/constraints/helpers'
+import { courseSlotsForDay } from '@/lib/constraints/helpers'
 import type { ScheduleContext, Violation } from '@/lib/constraints/types'
 
 /** EPS : bloc unique de 2 creneaux, sur un terrain, en tout debut ou toute fin de journee. */
 export function epsPlacement(ctx: ScheduleContext): Violation[] {
   const violations: Violation[] = []
-  const entries = entriesWithGroups(ctx)
 
-  for (const entry of entries) {
-    const subject = ctx.subjects.find((s) => s.id === entry.group.subject_id)
+  for (const entry of ctx.entries) {
+    const subject = ctx.subjects.find((s) => s.id === entry.subject_id)
     if (subject?.code !== 'EPS') continue
 
     const room = ctx.rooms.find((r) => r.id === entry.room_id)
@@ -28,7 +27,7 @@ export function epsPlacement(ctx: ScheduleContext): Violation[] {
       violations.push({
         ruleCode: 'eps_placement',
         severity: 'hard',
-        message: `${entry.group.label} : l'EPS doit etre un bloc de 2h sur le terrain, en debut ou fin de journee.`,
+        message: `L'EPS doit etre un bloc de 2h sur le terrain, en debut ou fin de journee.`,
         entryIds: [entry.id],
       })
     }

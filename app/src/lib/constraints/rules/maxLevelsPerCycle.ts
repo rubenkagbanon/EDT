@@ -1,30 +1,26 @@
-import { classesOfGroup, entriesWithGroups, levelOfClass, teachersOfGroup } from '@/lib/constraints/helpers'
+import { entriesWithClasses, levelOfClass } from '@/lib/constraints/helpers'
 import type { ScheduleContext, Violation } from '@/lib/constraints/types'
 
 /** Un enseignant ne doit pas intervenir sur plus de 3 niveaux differents par cycle (college / lycee separement). */
 export function maxLevelsPerCycle(ctx: ScheduleContext): Violation[] {
   const violations: Violation[] = []
-  const entries = entriesWithGroups(ctx)
+  const entries = entriesWithClasses(ctx)
 
   const levelsByTeacherCycle = new Map<string, Map<'college' | 'lycee', Set<string>>>()
   const entryIdsByTeacher = new Map<string, string[]>()
 
   for (const entry of entries) {
-    const classIds = classesOfGroup(ctx, entry.teaching_group_id)
-    const teacherIds = teachersOfGroup(ctx, entry.teaching_group_id)
-    for (const teacherId of teacherIds) {
-      entryIdsByTeacher.set(teacherId, [...(entryIdsByTeacher.get(teacherId) ?? []), entry.id])
-      const cycles = levelsByTeacherCycle.get(teacherId) ?? new Map()
-      for (const classId of classIds) {
-        const level = levelOfClass(ctx, classId)
-        if (!level) continue
-        const cycle = level.cycle as 'college' | 'lycee'
-        const set = cycles.get(cycle) ?? new Set<string>()
-        set.add(level.id)
-        cycles.set(cycle, set)
-      }
-      levelsByTeacherCycle.set(teacherId, cycles)
+    entryIdsByTeacher.set(entry.teacher_id, [...(entryIdsByTeacher.get(entry.teacher_id) ?? []), entry.id])
+    const cycles = levelsByTeacherCycle.get(entry.teacher_id) ?? new Map()
+    for (const classId of entry.classIds) {
+      const level = levelOfClass(ctx, classId)
+      if (!level) continue
+      const cycle = level.cycle as 'college' | 'lycee'
+      const set = cycles.get(cycle) ?? new Set<string>()
+      set.add(level.id)
+      cycles.set(cycle, set)
     }
+    levelsByTeacherCycle.set(entry.teacher_id, cycles)
   }
 
   for (const [teacherId, cycles] of levelsByTeacherCycle) {

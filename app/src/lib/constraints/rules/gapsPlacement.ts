@@ -1,10 +1,10 @@
-import { classesOfGroup, courseSlotsForDay, entriesWithGroups } from '@/lib/constraints/helpers'
+import { courseSlotsForDay, entriesWithClasses } from '@/lib/constraints/helpers'
 import type { ScheduleContext, Violation } from '@/lib/constraints/types'
 
 /** Heures creuses : a placer en debut/fin de demi-journee, jamais encadrant une seance occupee. */
 export function gapsPlacement(ctx: ScheduleContext): Violation[] {
   const violations: Violation[] = []
-  const entries = entriesWithGroups(ctx)
+  const entries = entriesWithClasses(ctx)
   const days = [1, 2, 3, 4, 5, 6]
 
   for (const cls of ctx.classes) {
@@ -15,7 +15,7 @@ export function gapsPlacement(ctx: ScheduleContext): Violation[] {
       const occupied = new Set<number>()
       for (const entry of entries) {
         if (entry.day_of_week !== day) continue
-        if (!classesOfGroup(ctx, entry.teaching_group_id).includes(cls.id)) continue
+        if (!entry.classIds.includes(cls.id)) continue
         for (let i = entry.start_slot_order; i < entry.start_slot_order + entry.slot_count; i++) {
           occupied.add(i)
         }

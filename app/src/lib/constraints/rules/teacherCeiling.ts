@@ -1,19 +1,15 @@
-import { entriesWithGroups, teachersOfGroup } from '@/lib/constraints/helpers'
 import type { ScheduleContext, Violation } from '@/lib/constraints/types'
 
 /** Plafond de service : le volume horaire assigne a un enseignant ne doit jamais depasser son plafond. */
 export function teacherCeiling(ctx: ScheduleContext): Violation[] {
   const violations: Violation[] = []
-  const entries = entriesWithGroups(ctx)
   const hoursByTeacher = new Map<string, { total: number; entryIds: string[] }>()
 
-  for (const entry of entries) {
-    for (const teacherId of teachersOfGroup(ctx, entry.teaching_group_id)) {
-      const acc = hoursByTeacher.get(teacherId) ?? { total: 0, entryIds: [] }
-      acc.total += entry.slot_count
-      acc.entryIds.push(entry.id)
-      hoursByTeacher.set(teacherId, acc)
-    }
+  for (const entry of ctx.entries) {
+    const acc = hoursByTeacher.get(entry.teacher_id) ?? { total: 0, entryIds: [] }
+    acc.total += entry.slot_count
+    acc.entryIds.push(entry.id)
+    hoursByTeacher.set(entry.teacher_id, acc)
   }
 
   for (const teacher of ctx.teachers) {

@@ -7,7 +7,9 @@ import { antiMonopoly } from '@/lib/constraints/rules/antiMonopoly'
 import { sequencing } from '@/lib/constraints/rules/sequencing'
 import { epsPlacement } from '@/lib/constraints/rules/epsPlacement'
 import { gapsPlacement } from '@/lib/constraints/rules/gapsPlacement'
-import { pairedGroupSimultaneity } from '@/lib/constraints/rules/pairedGroupSimultaneity'
+import { pairedEntrySimultaneity } from '@/lib/constraints/rules/pairedEntrySimultaneity'
+import { teacherAvailability } from '@/lib/constraints/rules/teacherAvailability'
+import { heavySubjectsMorning } from '@/lib/constraints/rules/heavySubjectsMorning'
 import type { ScheduleContext } from '@/lib/constraints/types'
 import type { Tables } from '@/types/database.types'
 
@@ -64,40 +66,32 @@ const timeSlots: Tables<'time_slots'>[] = [
   { id: 'ts8', establishment_id: EST, day_of_week: 1, order_index: 8, kind: 'cours', start_time: '15:00:00', end_time: '16:00:00' },
 ]
 
-function group(
-  id: string,
-  subjectId: string,
-  label: string,
-  pairedGroupId: string | null = null,
-): Tables<'teaching_groups'> {
-  return {
-    id,
-    establishment_id: EST,
-    subject_id: subjectId,
-    label,
-    session_slot_lengths: [1],
-    paired_group_id: pairedGroupId,
-  }
-}
-
 function entry(
   id: string,
-  groupId: string,
+  subjectId: string,
+  teacherId: string,
   day: number,
   start: number,
   count: number,
   roomId: string | null,
+  pairedEntryId: string | null = null,
 ): Tables<'schedule_entries'> {
   return {
     id,
     establishment_id: EST,
     academic_year_id: 'ay-1',
-    teaching_group_id: groupId,
+    subject_id: subjectId,
+    teacher_id: teacherId,
     day_of_week: day,
     start_slot_order: start,
     slot_count: count,
     room_id: roomId,
+    paired_entry_id: pairedEntryId,
   }
+}
+
+function links(entryId: string, classIds: string[]) {
+  return classIds.map((class_id) => ({ entry_id: entryId, class_id }))
 }
 
 function baseContext(overrides: Partial<ScheduleContext>): ScheduleContext {
@@ -108,29 +102,22 @@ function baseContext(overrides: Partial<ScheduleContext>): ScheduleContext {
     levels,
     subjects,
     teachers,
-    teachingGroups: [],
-    groupClasses: [],
-    groupTeachers: [],
+    teacherSubjects: [],
+    teacherLevels: [],
+    teacherUnavailability: [],
+    curriculumItems: [],
     entries: [],
+    entryClasses: [],
+    settings: null,
     ...overrides,
   }
 }
 
 describe('resourceUnicity', () => {
   it('flags a room double-booking', () => {
-    const ga = group('ga', 'MATH', 'Math C1')
-    const gb = group('gb', 'FRA', 'Francais C2')
     const ctx = baseContext({
-      teachingGroups: [ga, gb],
-      groupClasses: [
-        { group_id: 'ga', class_id: 'C1' },
-        { group_id: 'gb', class_id: 'C2' },
-      ],
-      groupTeachers: [
-        { group_id: 'ga', teacher_id: 'T1' },
-        { group_id: 'gb', teacher_id: 'T2' },
-      ],
-      entries: [entry('e1', 'ga', 1, 1, 1, 'S1'), entry('e2', 'gb', 1, 1, 1, 'S1')],
+      entries: [entry('e1', 'MATH', 'T1', 1, 1, 1, 'S1'), entry('e2', 'FRA', 'T2', 1, 1, 1, 'S1')],
+      entryClasses: [...links('e1', ['C1']), ...links('e2', ['C2'])],
     })
     const violations = resourceUnicity(ctx)
     expect(violations.some((v) => v.ruleCode === 'resource_unicity_room')).toBe(true)
@@ -139,90 +126,59 @@ describe('resourceUnicity', () => {
   })
 
   it('flags a teacher double-booking', () => {
-    const ga = group('ga', 'MATH', 'Math C1')
-    const gb = group('gb', 'FRA', 'Francais C2')
     const ctx = baseContext({
-      teachingGroups: [ga, gb],
-      groupClasses: [
-        { group_id: 'ga', class_id: 'C1' },
-        { group_id: 'gb', class_id: 'C2' },
-      ],
-      groupTeachers: [
-        { group_id: 'ga', teacher_id: 'T1' },
-        { group_id: 'gb', teacher_id: 'T1' },
-      ],
-      entries: [entry('e1', 'ga', 1, 1, 1, 'S1'), entry('e2', 'gb', 1, 1, 1, 'S2')],
+      entries: [entry('e1', 'MATH', 'T1', 1, 1, 1, 'S1'), entry('e2', 'FRA', 'T1', 1, 1, 1, 'S2')],
+      entryClasses: [...links('e1', ['C1']), ...links('e2', ['C2'])],
     })
-    const violations = resourceUnicity(ctx)
-    expect(violations.some((v) => v.ruleCode === 'resource_unicity_teacher')).toBe(true)
+    expect(resourceUnicity(ctx).some((v) => v.ruleCode === 'resource_unicity_teacher')).toBe(true)
   })
 
-  it('flags a class double-booking when groups are not paired', () => {
-    const ga = group('ga', 'MATH', 'Math C1')
-    const gb = group('gb', 'FRA', 'Francais C1')
+  it('flags a class double-booking when entries are not paired', () => {
     const ctx = baseContext({
-      teachingGroups: [ga, gb],
-      groupClasses: [
-        { group_id: 'ga', class_id: 'C1' },
-        { group_id: 'gb', class_id: 'C1' },
-      ],
-      groupTeachers: [
-        { group_id: 'ga', teacher_id: 'T1' },
-        { group_id: 'gb', teacher_id: 'T2' },
-      ],
-      entries: [entry('e1', 'ga', 1, 1, 1, 'S1'), entry('e2', 'gb', 1, 1, 1, 'S2')],
+      entries: [entry('e1', 'MATH', 'T1', 1, 1, 1, 'S1'), entry('e2', 'FRA', 'T2', 1, 1, 1, 'S2')],
+      entryClasses: [...links('e1', ['C1']), ...links('e2', ['C1'])],
     })
     expect(resourceUnicity(ctx).some((v) => v.ruleCode === 'resource_unicity_class')).toBe(true)
   })
 
-  it('allows a tandem (paired groups) to share the same class and slot', () => {
-    const ga = group('ga', 'PC', 'PC C1', 'gb')
-    const gb = group('gb', 'SVT', 'SVT C1', 'ga')
+  it('allows a tandem (paired entries) to share the same class and slot', () => {
     const ctx = baseContext({
-      teachingGroups: [ga, gb],
-      groupClasses: [
-        { group_id: 'ga', class_id: 'C1' },
-        { group_id: 'gb', class_id: 'C1' },
+      entries: [
+        entry('e1', 'PC', 'T1', 1, 1, 1, 'L1', 'e2'),
+        entry('e2', 'SVT', 'T2', 1, 1, 1, 'L2', 'e1'),
       ],
-      groupTeachers: [
-        { group_id: 'ga', teacher_id: 'T1' },
-        { group_id: 'gb', teacher_id: 'T2' },
-      ],
-      entries: [entry('e1', 'ga', 1, 1, 1, 'L1'), entry('e2', 'gb', 1, 1, 1, 'L2')],
+      entryClasses: [...links('e1', ['C1']), ...links('e2', ['C1'])],
     })
     expect(resourceUnicity(ctx)).toHaveLength(0)
   })
 })
 
-describe('pairedGroupSimultaneity', () => {
+describe('pairedEntrySimultaneity', () => {
   it('flags a tandem placed on mismatched slots', () => {
-    const ga = group('ga', 'PC', 'PC C1', 'gb')
-    const gb = group('gb', 'SVT', 'SVT C1', 'ga')
     const ctx = baseContext({
-      teachingGroups: [ga, gb],
-      entries: [entry('e1', 'ga', 1, 1, 1, 'L1'), entry('e2', 'gb', 1, 4, 1, 'L2')],
+      entries: [
+        entry('e1', 'PC', 'T1', 1, 1, 1, 'L1', 'e2'),
+        entry('e2', 'SVT', 'T2', 1, 4, 1, 'L2', 'e1'),
+      ],
     })
-    expect(pairedGroupSimultaneity(ctx).length).toBeGreaterThan(0)
+    expect(pairedEntrySimultaneity(ctx).length).toBeGreaterThan(0)
   })
 
   it('does not flag a tandem correctly placed in 2 rooms at the same slot', () => {
-    const ga = group('ga', 'PC', 'PC C1', 'gb')
-    const gb = group('gb', 'SVT', 'SVT C1', 'ga')
     const ctx = baseContext({
-      teachingGroups: [ga, gb],
-      entries: [entry('e1', 'ga', 1, 1, 1, 'L1'), entry('e2', 'gb', 1, 1, 1, 'L2')],
+      entries: [
+        entry('e1', 'PC', 'T1', 1, 1, 1, 'L1', 'e2'),
+        entry('e2', 'SVT', 'T2', 1, 1, 1, 'L2', 'e1'),
+      ],
     })
-    expect(pairedGroupSimultaneity(ctx)).toHaveLength(0)
+    expect(pairedEntrySimultaneity(ctx)).toHaveLength(0)
   })
 })
 
 describe('teacherCeiling', () => {
   it('flags a teacher over their weekly ceiling', () => {
-    const ga = group('ga', 'MATH', 'Math C1')
     const ctx = baseContext({
-      teachingGroups: [ga],
-      groupTeachers: [{ group_id: 'ga', teacher_id: 'T3' }],
-      entries: [entry('e1', 'ga', 1, 1, 3, 'S1')], // T3 plafond = 2h
+      entries: [entry('e1', 'MATH', 'T3', 1, 1, 3, 'S1')], // T3 plafond = 2h
     })
     const violations = teacherCeiling(ctx)
     expect(violations).toHaveLength(1)
@@ -232,21 +188,18 @@ describe('teacherCeiling', () => {
 
 describe('maxLevelsPerCycle', () => {
   it('flags a teacher spread across more than 3 college levels', () => {
-    const groups = ['g1', 'g2', 'g3', 'g4'].map((id, i) => group(id, 'MATH', `Math ${i}`))
     const ctx = baseContext({
-      teachingGroups: groups,
-      groupClasses: [
-        { group_id: 'g1', class_id: 'C1' }, // 6eme
-        { group_id: 'g2', class_id: 'C3' }, // 5eme
-        { group_id: 'g3', class_id: 'C4' }, // 4eme
-        { group_id: 'g4', class_id: 'C5' }, // 3eme
-      ],
-      groupTeachers: groups.map((g) => ({ group_id: g.id, teacher_id: 'T1' })),
       entries: [
-        entry('e1', 'g1', 1, 1, 1, 'S1'),
-        entry('e2', 'g2', 2, 1, 1, 'S1'),
-        entry('e3', 'g3', 3, 1, 1, 'S1'),
-        entry('e4', 'g4', 4, 1, 1, 'S1'),
+        entry('e1', 'MATH', 'T1', 1, 1, 1, 'S1'),
+        entry('e2', 'MATH', 'T1', 2, 1, 1, 'S1'),
+        entry('e3', 'MATH', 'T1', 3, 1, 1, 'S1'),
+        entry('e4', 'MATH', 'T1', 4, 1, 1, 'S1'),
+      ],
+      entryClasses: [
+        ...links('e1', ['C1']), // 6eme
+        ...links('e2', ['C3']), // 5eme
+        ...links('e3', ['C4']), // 4eme
+        ...links('e4', ['C5']), // 3eme
       ],
     })
     expect(maxLevelsPerCycle(ctx).some((v) => v.ruleCode === 'max_levels_per_cycle')).toBe(true)
@@ -255,37 +208,17 @@ describe('maxLevelsPerCycle', () => {
 
 describe('antiMonopoly', () => {
   it('flags a teacher covering every class of a level for one subject', () => {
-    const ga = group('ga', 'MATH', 'Math C1')
-    const gb = group('gb', 'MATH', 'Math C2')
     const ctx = baseContext({
-      teachingGroups: [ga, gb],
-      groupClasses: [
-        { group_id: 'ga', class_id: 'C1' },
-        { group_id: 'gb', class_id: 'C2' },
-      ],
-      groupTeachers: [
-        { group_id: 'ga', teacher_id: 'T1' },
-        { group_id: 'gb', teacher_id: 'T1' },
-      ],
-      entries: [entry('e1', 'ga', 1, 1, 1, 'S1'), entry('e2', 'gb', 2, 1, 1, 'S1')],
+      entries: [entry('e1', 'MATH', 'T1', 1, 1, 1, 'S1'), entry('e2', 'MATH', 'T1', 2, 1, 1, 'S1')],
+      entryClasses: [...links('e1', ['C1']), ...links('e2', ['C2'])],
     })
     expect(antiMonopoly(ctx).some((v) => v.ruleCode === 'anti_monopoly')).toBe(true)
   })
 
   it('does not flag when classes of a level are split across teachers', () => {
-    const ga = group('ga', 'MATH', 'Math C1')
-    const gb = group('gb', 'MATH', 'Math C2')
     const ctx = baseContext({
-      teachingGroups: [ga, gb],
-      groupClasses: [
-        { group_id: 'ga', class_id: 'C1' },
-        { group_id: 'gb', class_id: 'C2' },
-      ],
-      groupTeachers: [
-        { group_id: 'ga', teacher_id: 'T1' },
-        { group_id: 'gb', teacher_id: 'T2' },
-      ],
-      entries: [entry('e1', 'ga', 1, 1, 1, 'S1'), entry('e2', 'gb', 2, 1, 1, 'S1')],
+      entries: [entry('e1', 'MATH', 'T1', 1, 1, 1, 'S1'), entry('e2', 'MATH', 'T2', 2, 1, 1, 'S1')],
+      entryClasses: [...links('e1', ['C1']), ...links('e2', ['C2'])],
     })
     expect(antiMonopoly(ctx)).toHaveLength(0)
   })
@@ -293,21 +226,23 @@ describe('antiMonopoly', () => {
 
 describe('sequencing', () => {
   it('flags 2 langues subjects enchained, same-subject-twice and min-subjects', () => {
-    const gFra = group('gFra', 'FRA', 'Francais C1')
-    const gAng = group('gAng', 'ANG', 'Anglais C1')
-    const gFra2 = group('gFra2', 'FRA', 'Francais C1 bis')
     const ctx = baseContext({
-      teachingGroups: [gFra, gAng, gFra2],
-      groupClasses: [
-        { group_id: 'gFra', class_id: 'C1' },
-        { group_id: 'gAng', class_id: 'C1' },
-        { group_id: 'gFra2', class_id: 'C1' },
-      ],
       entries: [
-        entry('e1', 'gFra', 1, 1, 1, 'S1'), // 08-09 FRA
-        entry('e2', 'gAng', 1, 2, 1, 'S1'), // 09-10 ANG (enchaine avec FRA)
-        entry('e3', 'gFra2', 1, 4, 1, 'S1'), // 10h15-11h15 FRA (2e fois dans la journee)
+        entry('e1', 'FRA', 'T1', 1, 1, 1, 'S1'), // 08-09 FRA
+        entry('e2', 'ANG', 'T2', 1, 2, 1, 'S1'), // 09-10 ANG (enchaine avec FRA)
+        entry('e3', 'FRA', 'T1', 1, 4, 1, 'S1'), // 10h15-11h15 FRA (2e fois dans la journee)
       ],
+      entryClasses: [...links('e1', ['C1']), ...links('e2', ['C1']), ...links('e3', ['C1'])],
+      // Seuil explicite a 1 : le defaut (2) autorise desormais 2 occurrences/jour.
+      settings: {
+        establishment_id: EST,
+        grille_stricte: true,
+        etaler: true,
+        max_meme_matiere_jour: 1,
+        lourdes_matin: true,
+        matieres_lourdes: [],
+        respecter_indispos: true,
+      },
     })
     const violations = sequencing(ctx)
     expect(violations.some((v) => v.ruleCode === 'sequencing_langues')).toBe(true)
@@ -316,85 +251,158 @@ describe('sequencing', () => {
   })
 
   it('flags 2 sciences subjects enchained', () => {
-    const gMath = group('gMath', 'MATH', 'Math C1')
-    const gPc = group('gPc', 'PC', 'PC C1')
     const ctx = baseContext({
-      teachingGroups: [gMath, gPc],
-      groupClasses: [
-        { group_id: 'gMath', class_id: 'C1' },
-        { group_id: 'gPc', class_id: 'C1' },
-      ],
-      entries: [entry('e1', 'gMath', 1, 1, 1, 'S1'), entry('e2', 'gPc', 1, 2, 1, 'S1')],
+      entries: [entry('e1', 'MATH', 'T1', 1, 1, 1, 'S1'), entry('e2', 'PC', 'T2', 1, 2, 1, 'S1')],
+      entryClasses: [...links('e1', ['C1']), ...links('e2', ['C1'])],
     })
     expect(sequencing(ctx).some((v) => v.ruleCode === 'sequencing_sciences')).toBe(true)
   })
 
   it('does not flag a recreation-separated pair of langues subjects', () => {
-    const gFra = group('gFra', 'FRA', 'Francais C1')
-    const gAng = group('gAng', 'ANG', 'Anglais C1')
     const ctx = baseContext({
-      teachingGroups: [gFra, gAng],
-      groupClasses: [
-        { group_id: 'gFra', class_id: 'C1' },
-        { group_id: 'gAng', class_id: 'C1' },
-      ],
-      entries: [entry('e1', 'gFra', 1, 2, 1, 'S1'), entry('e2', 'gAng', 1, 4, 1, 'S1')],
+      entries: [entry('e1', 'FRA', 'T1', 1, 2, 1, 'S1'), entry('e2', 'ANG', 'T2', 1, 4, 1, 'S1')],
+      entryClasses: [...links('e1', ['C1']), ...links('e2', ['C1'])],
     })
     expect(sequencing(ctx).some((v) => v.ruleCode === 'sequencing_langues')).toBe(false)
+  })
+
+  it('respects a custom max_meme_matiere_jour setting and etaler=false', () => {
+    const entries = [
+      entry('e1', 'MATH', 'T1', 1, 1, 1, 'S1'),
+      entry('e2', 'MATH', 'T1', 1, 4, 1, 'S1'),
+      entry('e3', 'MATH', 'T1', 1, 5, 1, 'S1'),
+    ]
+    const entryClasses = [...links('e1', ['C1']), ...links('e2', ['C1']), ...links('e3', ['C1'])]
+
+    const ctx = baseContext({
+      entries,
+      entryClasses,
+      settings: {
+        establishment_id: EST,
+        grille_stricte: true,
+        etaler: true,
+        max_meme_matiere_jour: 3,
+        lourdes_matin: true,
+        matieres_lourdes: [],
+        respecter_indispos: true,
+      },
+    })
+    // 3 occurrences <= seuil de 3 : pas de violation same-subject-twice.
+    expect(sequencing(ctx).some((v) => v.ruleCode === 'sequencing_same_subject_twice')).toBe(false)
+
+    const ctxNoEtaler = baseContext({
+      entries,
+      entryClasses,
+      settings: {
+        establishment_id: EST,
+        grille_stricte: true,
+        etaler: false,
+        max_meme_matiere_jour: 1,
+        lourdes_matin: true,
+        matieres_lourdes: [],
+        respecter_indispos: true,
+      },
+    })
+    expect(sequencing(ctxNoEtaler).some((v) => v.ruleCode === 'sequencing_same_subject_twice')).toBe(false)
   })
 })
 
 describe('epsPlacement', () => {
   it('accepts a 2h EPS block on the terrain at the start of the day', () => {
-    const gEps = group('gEps', 'EPS', 'EPS C1')
-    const ctx = baseContext({
-      teachingGroups: [gEps],
-      entries: [entry('e1', 'gEps', 1, 1, 2, 'TERRAIN')],
-    })
+    const ctx = baseContext({ entries: [entry('e1', 'EPS', 'T1', 1, 1, 2, 'TERRAIN')] })
     expect(epsPlacement(ctx)).toHaveLength(0)
   })
 
   it('flags EPS placed in the middle of the day', () => {
-    const gEps = group('gEps', 'EPS', 'EPS C1')
-    const ctx = baseContext({
-      teachingGroups: [gEps],
-      entries: [entry('e1', 'gEps', 1, 4, 2, 'TERRAIN')],
-    })
+    const ctx = baseContext({ entries: [entry('e1', 'EPS', 'T1', 1, 4, 2, 'TERRAIN')] })
     expect(epsPlacement(ctx).some((v) => v.ruleCode === 'eps_placement')).toBe(true)
   })
 
   it('flags EPS not held on the terrain', () => {
-    const gEps = group('gEps', 'EPS', 'EPS C1')
-    const ctx = baseContext({
-      teachingGroups: [gEps],
-      entries: [entry('e1', 'gEps', 1, 1, 2, 'S1')],
-    })
+    const ctx = baseContext({ entries: [entry('e1', 'EPS', 'T1', 1, 1, 2, 'S1')] })
     expect(epsPlacement(ctx).some((v) => v.ruleCode === 'eps_placement')).toBe(true)
   })
 })
 
 describe('gapsPlacement', () => {
   it('flags a gap sandwiched between 2 occupied slots', () => {
-    const ga = group('ga', 'MATH', 'Math C1')
-    const gb = group('gb', 'FRA', 'Francais C1')
     const ctx = baseContext({
-      teachingGroups: [ga, gb],
-      groupClasses: [
-        { group_id: 'ga', class_id: 'C1' },
-        { group_id: 'gb', class_id: 'C1' },
-      ],
-      entries: [entry('e1', 'ga', 1, 1, 1, 'S1'), entry('e2', 'gb', 1, 4, 1, 'S1')],
+      entries: [entry('e1', 'MATH', 'T1', 1, 1, 1, 'S1'), entry('e2', 'FRA', 'T2', 1, 4, 1, 'S1')],
+      entryClasses: [...links('e1', ['C1']), ...links('e2', ['C1'])],
     })
     expect(gapsPlacement(ctx).some((v) => v.ruleCode === 'gaps_sandwiched')).toBe(true)
   })
 
   it('does not flag a trailing gap at the end of the day', () => {
-    const ga = group('ga', 'MATH', 'Math C1')
     const ctx = baseContext({
-      teachingGroups: [ga],
-      groupClasses: [{ group_id: 'ga', class_id: 'C1' }],
-      entries: [entry('e1', 'ga', 1, 4, 1, 'S1')],
+      entries: [entry('e1', 'MATH', 'T1', 1, 4, 1, 'S1')],
+      entryClasses: links('e1', ['C1']),
     })
     expect(gapsPlacement(ctx)).toHaveLength(0)
+  })
+})
+
+describe('teacherAvailability', () => {
+  it('flags a teacher placed on a slot they marked unavailable', () => {
+    const ctx = baseContext({
+      entries: [entry('e1', 'MATH', 'T1', 1, 1, 1, 'S1')],
+      teacherUnavailability: [
+        { id: 'u1', establishment_id: EST, teacher_id: 'T1', day_of_week: 1, order_index: 1 },
+      ],
+    })
+    expect(teacherAvailability(ctx).some((v) => v.ruleCode === 'teacher_availability')).toBe(true)
+  })
+
+  it('ignores unavailability when respecter_indispos is false', () => {
+    const ctx = baseContext({
+      entries: [entry('e1', 'MATH', 'T1', 1, 1, 1, 'S1')],
+      teacherUnavailability: [
+        { id: 'u1', establishment_id: EST, teacher_id: 'T1', day_of_week: 1, order_index: 1 },
+      ],
+      settings: {
+        establishment_id: EST,
+        grille_stricte: true,
+        etaler: true,
+        max_meme_matiere_jour: 2,
+        lourdes_matin: true,
+        matieres_lourdes: [],
+        respecter_indispos: false,
+      },
+    })
+    expect(teacherAvailability(ctx)).toHaveLength(0)
+  })
+})
+
+describe('heavySubjectsMorning', () => {
+  it('flags a heavy subject placed in the afternoon half of the day', () => {
+    const ctx = baseContext({
+      entries: [entry('e1', 'MATH', 'T1', 1, 7, 1, 'S1')], // dernier creneau du jour
+      settings: {
+        establishment_id: EST,
+        grille_stricte: true,
+        etaler: true,
+        max_meme_matiere_jour: 2,
+        lourdes_matin: true,
+        matieres_lourdes: ['MATH'],
+        respecter_indispos: true,
+      },
+    })
+    expect(heavySubjectsMorning(ctx).some((v) => v.ruleCode === 'heavy_subject_afternoon')).toBe(true)
+  })
+
+  it('does not flag a heavy subject placed in the morning', () => {
+    const ctx = baseContext({
+      entries: [entry('e1', 'MATH', 'T1', 1, 1, 1, 'S1')],
+      settings: {
+        establishment_id: EST,
+        grille_stricte: true,
+        etaler: true,
+        max_meme_matiere_jour: 2,
+        lourdes_matin: true,
+        matieres_lourdes: ['MATH'],
+        respecter_indispos: true,
+      },
+    })
+    expect(heavySubjectsMorning(ctx)).toHaveLength(0)
   })
 })
